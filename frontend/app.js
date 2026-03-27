@@ -1,0 +1,297 @@
+const state = {
+  apiBaseUrl: "",
+  jobs: [],
+  filteredJobs: [],
+  digest: null,
+  sources: [],
+};
+
+const elements = {
+  eligibleCount: document.querySelector("#eligibleCount"),
+  newCount: document.querySelector("#newCount"),
+  savedCount: document.querySelector("#savedCount"),
+  searchInput: document.querySelector("#searchInput"),
+  statusFilter: document.querySelector("#statusFilter"),
+  sourceFilter: document.querySelector("#sourceFilter"),
+  scoreFilter: document.querySelector("#scoreFilter"),
+  onlyNewToggle: document.querySelector("#onlyNewToggle"),
+  refreshButton: document.querySelector("#refreshButton"),
+  statusLine: document.querySelector("#statusLine"),
+  apiLine: document.querySelector("#apiLine"),
+  digestGenerated: document.querySelector("#digestGenerated"),
+  digestCompanies: document.querySelector("#digestCompanies"),
+  digestReasons: document.querySelector("#digestReasons"),
+  sourceQualityList: document.querySelector("#sourceQualityList"),
+  jobsGrid: document.querySelector("#jobsGrid"),
+  template: document.querySelector("#jobCardTemplate"),
+};
+
+async function loadConfig() {
+  try {
+    const response = await fetch("./config.json", { cache: "no-store" });
+    if (!response.ok) {
+      throw new Error(`config ${response.status}`);
+    }
+    return await response.json();
+  } catch (_error) {
+    return { apiBaseUrl: "http://localhost:3000" };
+  }
+}
+
+function buildJobsUrl() {
+  const url = new URL("/jobs", state.apiBaseUrl);
+  const status = elements.statusFilter.value.trim();
+  const minScore = elements.scoreFilter.value.trim();
+  if (status) {
+    url.searchParams.set("status", status);
+  }
+  if (minScore) {
+    url.searchParams.set("min_score", minScore);
+  }
+  url.searchParams.set("eligible_only", "true");
+  url.searchParams.set("only_new", elements.onlyNewToggle.checked ? "true" : "false");
+  url.searchParams.set("limit", "200");
+  return url;
+}
+
+function updateSummary() {
+  const eligible = state.jobs.filter((job) => job.is_eligible).length;
+  const saved = state.jobs.filter((job) => job.status === "saved").length;
+  const newCount = state.jobs.filter((job) => job.status === "new").length;
+  elements.eligibleCount.textContent = String(eligible);
+  elements.savedCount.textContent = String(saved);
+  elements.newCount.textContent = String(newCount);
+}
+
+function updateSourceFilter() {
+  const sources = [...new Set(state.jobs.map((job) => job.source_type))].sort();
+  const currentValue = elements.sourceFilter.value;
+  elements.sourceFilter.innerHTML = '<option value="">All</option>';
+  for (const source of sources) {
+    const option = document.createElement("option");
+    option.value = source;
+    option.textContent = source;
+    elements.sourceFilter.append(option);
+  }
+  elements.sourceFilter.value = sources.includes(currentValue) ? currentValue : "";
+}
+
+function applyClientFilters() {
+  const search = elements.searchInput.value.trim().toLowerCase();
+  const source = elements.sourceFilter.value.trim();
+
+  state.filteredJobs = state.jobs.filter((job) => {
+    if (source && job.source_type !== source) {
+      return false;
+    }
+    if (!search) {
+      return true;
+    }
+    const haystack = [job.company, job.title, job.description_text, ...(job.score_reasons || [])].join(" ").toLowerCase();
+    return haystack.includes(search);
+  });
+  renderJobs();
+}
+
+async function fetchJobs() {
+  const url = buildJobsUrl();
+  elements.statusLine.textContent = "Loading jobs...";
+  const response = await fetch(url, { cache: "no-store" });
+  if (!response.ok) {
+    throw new Error(`API ${response.status}`);
+  }
+  const payload = await response.json();
+  state.jobs = payload.items || [];
+  updateSummary();
+  updateSourceFilter();
+  applyClientFilters();
+  elements.statusLine.textContent = `Showing ${state.filteredJobs.length} jobs`;
+}
+
+function renderDigest() {
+  const digest = state.digest;
+  elements.digestCompanies.innerHTML = "";
+  elements.digestReasons.innerHTML = "";
+  if (!digest) {
+    elements.digestGenerated.textContent = "Unavailable";
+    return;
+  }
+  elements.digestGenerated.textContent = `${digest.count} top matches`;
+  (digest.summary?.top_companies || []).slice(0, 6).forEach(([company, count]) => {
+    elements.digestCompanies.append(makePill(`${company} (${count})`));
+  });
+  (digest.summary?.top_reasons || []).slice(0, 6).forEach(([reason, count]) => {
+    elements.digestReasons.append(makePill(`${reason} (${count})`));
+  });
+}
+
+function renderSourceQuality() {
+  elements.sourceQualityList.innerHTML = "";
+  if (!state.sources.length) {
+    const empty = document.createElement("p");
+    empty.className = "muted";
+    empty.textContent = "No source quality data yet.";
+    elements.sourceQualityList.append(empty);
+    return;
+  }
+  state.sources.slice(0, 6).forEach((source) => {
+    const item = document.createElement("div");
+    item.className = "source-item";
+
+    const left = document.createElement("div");
+    const title = document.createElement("strong");
+    title.textContent = `${source.company} (${source.source_type})`;
+    const detail = document.createElement("p");
+    detail.textContent = `${source.status} • ${source.high_score_jobs_total || 0} strong matches • ${source.eligible_jobs_total || 0} eligible`;
+    left.append(title, detail);
+
+    const score = document.createElement("div");
+    score.className = "source-score";
+    score.textContent = source.quality_score;
+
+    item.append(left, score);
+    elements.sourceQualityList.append(item);
+  });
+}
+
+async function fetchInsights() {
+  const digestMinScore = Math.max(Number(elements.scoreFilter.value || "0"), 60);
+  const digestUrl = new URL("/digest", state.apiBaseUrl);
+  digestUrl.searchParams.set("limit", "8");
+  digestUrl.searchParams.set("min_score", String(digestMinScore));
+
+  const sourcesUrl = new URL("/sources", state.apiBaseUrl);
+  sourcesUrl.searchParams.set("limit", "8");
+  sourcesUrl.searchParams.set("statuses", "active,candidate,low_value");
+
+  const [digestResponse, sourcesResponse] = await Promise.all([
+    fetch(digestUrl, { cache: "no-store" }),
+    fetch(sourcesUrl, { cache: "no-store" }),
+  ]);
+  if (!digestResponse.ok || !sourcesResponse.ok) {
+    throw new Error(`Insights ${digestResponse.status}/${sourcesResponse.status}`);
+  }
+  state.digest = await digestResponse.json();
+  const sourcesPayload = await sourcesResponse.json();
+  state.sources = sourcesPayload.items || [];
+  renderDigest();
+  renderSourceQuality();
+}
+
+async function refreshData() {
+  await Promise.all([fetchJobs(), fetchInsights()]);
+}
+
+async function updateJob(jobId, payload) {
+  const url = new URL(`/jobs/${jobId}`, state.apiBaseUrl);
+  const response = await fetch(url, {
+    method: "PATCH",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(payload),
+  });
+  if (!response.ok) {
+    throw new Error(`Update failed with ${response.status}`);
+  }
+  await fetchJobs();
+}
+
+function truncate(text, length = 260) {
+  const normalized = (text || "").trim();
+  if (normalized.length <= length) {
+    return normalized;
+  }
+  return `${normalized.slice(0, length - 1)}…`;
+}
+
+function makePill(text) {
+  const pill = document.createElement("span");
+  pill.textContent = text;
+  return pill;
+}
+
+function renderJobs() {
+  elements.jobsGrid.innerHTML = "";
+  if (!state.filteredJobs.length) {
+    const empty = document.createElement("div");
+    empty.className = "empty-state";
+    empty.textContent = "No jobs match the current filters.";
+    elements.jobsGrid.append(empty);
+    return;
+  }
+
+  for (const job of state.filteredJobs) {
+    const fragment = elements.template.content.cloneNode(true);
+    const article = fragment.querySelector(".job-card");
+    article.dataset.status = job.status;
+    fragment.querySelector(".company").textContent = job.company;
+    fragment.querySelector("h2").textContent = job.title;
+    fragment.querySelector(".score-pill").textContent = job.score;
+    fragment.querySelector(".description").textContent = truncate(job.description_text, 280);
+
+    const meta = fragment.querySelector(".meta");
+    [
+      job.location_text || "Unknown location",
+      job.remote_type,
+      job.posted_date || "posted date unavailable",
+      job.status,
+      job.source_type,
+    ].forEach((text) => meta.append(makePill(text)));
+
+    const reasons = fragment.querySelector(".reasons");
+    (job.score_reasons || []).slice(0, 5).forEach((reason) => reasons.append(makePill(reason)));
+
+    const notes = fragment.querySelector(".notes");
+    notes.value = job.notes || "";
+    notes.addEventListener("change", () => updateJob(job.job_id, { notes: notes.value }));
+
+    const applyLink = fragment.querySelector(".apply-link");
+    applyLink.href = job.apply_url;
+
+    fragment.querySelector(".save").addEventListener("click", () => updateJob(job.job_id, { status: "saved", notes: notes.value }));
+    fragment.querySelector(".dismiss").addEventListener("click", () => updateJob(job.job_id, { status: "dismissed", notes: notes.value }));
+    fragment.querySelector(".applied").addEventListener("click", () => updateJob(job.job_id, { status: "applied", notes: notes.value }));
+
+    elements.jobsGrid.append(fragment);
+  }
+}
+
+async function init() {
+  const config = await loadConfig();
+  state.apiBaseUrl = config.apiBaseUrl;
+  elements.apiLine.textContent = `API: ${state.apiBaseUrl}`;
+
+  [
+    elements.searchInput,
+    elements.statusFilter,
+    elements.sourceFilter,
+    elements.scoreFilter,
+    elements.onlyNewToggle,
+  ].forEach((element) => {
+    element.addEventListener("input", () => {
+      if (element === elements.searchInput || element === elements.sourceFilter) {
+        applyClientFilters();
+        return;
+      }
+      refreshData().catch((error) => {
+        elements.statusLine.textContent = error.message;
+      });
+    });
+    element.addEventListener("change", () => {
+      if (element === elements.searchInput || element === elements.sourceFilter) {
+        applyClientFilters();
+      }
+    });
+  });
+
+  elements.refreshButton.addEventListener("click", () => {
+    refreshData().catch((error) => {
+      elements.statusLine.textContent = error.message;
+    });
+  });
+
+  await refreshData();
+}
+
+init().catch((error) => {
+  elements.statusLine.textContent = error.message;
+});

@@ -1,0 +1,125 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Job Finder</title>
+    <link rel="stylesheet" href="./styles.css" />
+  </head>
+  <body>
+    <div class="shell">
+      <header class="hero">
+        <div>
+          <p class="eyebrow">Remote Infrastructure Roles</p>
+          <h1>New DevOps and platform jobs, ranked for fit.</h1>
+          <p class="lede">
+            Direct employer and ATS postings tuned for AWS, Terraform, automation, and observability. Kubernetes-heavy roles
+            sink by design.
+          </p>
+        </div>
+        <div class="hero-panel" id="summary">
+          <div class="stat">
+            <span class="label">Eligible</span>
+            <strong id="eligibleCount">0</strong>
+          </div>
+          <div class="stat">
+            <span class="label">New</span>
+            <strong id="newCount">0</strong>
+          </div>
+          <div class="stat">
+            <span class="label">Saved</span>
+            <strong id="savedCount">0</strong>
+          </div>
+        </div>
+      </header>
+
+      <section class="toolbar">
+        <label>
+          <span>Search</span>
+          <input id="searchInput" type="search" placeholder="AWS, Terraform, observability..." />
+        </label>
+        <label>
+          <span>Status</span>
+          <select id="statusFilter">
+            <option value="">All</option>
+            <option value="new">New</option>
+            <option value="saved">Saved</option>
+            <option value="dismissed">Dismissed</option>
+            <option value="applied">Applied</option>
+          </select>
+        </label>
+        <label>
+          <span>Source</span>
+          <select id="sourceFilter">
+            <option value="">All</option>
+          </select>
+        </label>
+        <label>
+          <span>Minimum score</span>
+          <input id="scoreFilter" type="number" min="-100" max="200" step="5" value="30" />
+        </label>
+        <label class="toggle">
+          <input id="onlyNewToggle" type="checkbox" checked />
+          <span>Only new</span>
+        </label>
+        <button class="primary" id="refreshButton" type="button">Refresh</button>
+      </section>
+
+      <section class="meta-row">
+        <p id="statusLine">Loading jobs...</p>
+        <p class="muted" id="apiLine"></p>
+      </section>
+
+      <section class="insights">
+        <article class="insight-panel">
+          <div class="insight-head">
+            <h2>Digest</h2>
+            <p class="muted" id="digestGenerated">Loading...</p>
+          </div>
+          <div class="insight-block">
+            <h3>Top companies</h3>
+            <div class="pill-list" id="digestCompanies"></div>
+          </div>
+          <div class="insight-block">
+            <h3>Top reasons</h3>
+            <div class="pill-list" id="digestReasons"></div>
+          </div>
+        </article>
+
+        <article class="insight-panel">
+          <div class="insight-head">
+            <h2>Source quality</h2>
+            <p class="muted">Best ATS boards right now</p>
+          </div>
+          <div class="source-list" id="sourceQualityList"></div>
+        </article>
+      </section>
+
+      <main id="jobsGrid" class="jobs-grid"></main>
+    </div>
+
+    <template id="jobCardTemplate">
+      <article class="job-card">
+        <div class="card-top">
+          <div>
+            <p class="company"></p>
+            <h2></h2>
+          </div>
+          <div class="score-pill"></div>
+        </div>
+        <div class="meta"></div>
+        <div class="reasons"></div>
+        <p class="description"></p>
+        <textarea class="notes" rows="3" placeholder="Notes"></textarea>
+        <div class="actions">
+          <a class="apply-link" target="_blank" rel="noreferrer noopener">Open role</a>
+          <button class="ghost save" type="button">Save</button>
+          <button class="ghost dismiss" type="button">Dismiss</button>
+          <button class="ghost applied" type="button">Applied</button>
+        </div>
+      </article>
+    </template>
+
+    <script type="module" src="./app.js"></script>
+  </body>
+</html>

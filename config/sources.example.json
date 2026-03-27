@@ -1,0 +1,34 @@
+[
+  {
+    "company": "Example Greenhouse Company",
+    "source_type": "greenhouse",
+    "identifier": "example",
+    "company_size": "mid",
+    "company_tags": ["saas"],
+    "careers_url": "https://boards.greenhouse.io/example"
+  },
+  {
+    "company": "Example Lever Company",
+    "source_type": "lever",
+    "identifier": "example",
+    "company_size": "small",
+    "company_tags": ["saas"],
+    "careers_url": "https://jobs.lever.co/example"
+  },
+  {
+    "company": "Example Ashby Company",
+    "source_type": "ashby",
+    "identifier": "example",
+    "company_size": "small",
+    "company_tags": ["saas"],
+    "careers_url": "https://jobs.ashbyhq.com/example"
+  },
+  {
+    "company": "Example Workable Company",
+    "source_type": "workable",
+    "identifier": "example",
+    "company_size": "mid",
+    "company_tags": ["saas"],
+    "careers_url": "https://apply.workable.com/example"
+  }
+]
