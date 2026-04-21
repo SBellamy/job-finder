@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import logging
 from decimal import Decimal
 from typing import Any
 
@@ -10,18 +11,31 @@ from job_finder.config import load_allowed_origin, load_discovery_settings, load
 from job_finder.storage import DynamoJobRepository, S3PayloadStore
 
 
-def _repository_and_payload_store() -> tuple[DynamoJobRepository, S3PayloadStore]:
+logger = logging.getLogger(__name__)
+
+
+def _repository() -> DynamoJobRepository:
     settings = load_storage_settings()
-    missing = [key for key, value in settings.items() if not value]
+    required_settings = ("jobs_table_name", "crawl_runs_table_name", "sources_table_name")
+    missing = [key for key in required_settings if not settings[key]]
     if missing:
         raise RuntimeError(f"Missing storage settings: {', '.join(missing)}")
-    repository = DynamoJobRepository(
+    return DynamoJobRepository(
         jobs_table_name=settings["jobs_table_name"] or "",
         crawl_runs_table_name=settings["crawl_runs_table_name"] or "",
         sources_table_name=settings["sources_table_name"] or "",
     )
-    payload_store = S3PayloadStore(bucket_name=settings["raw_payload_bucket_name"] or "")
-    return repository, payload_store
+
+
+def _payload_store() -> S3PayloadStore:
+    settings = load_storage_settings()
+    if not settings["raw_payload_bucket_name"]:
+        raise RuntimeError("Missing storage settings: raw_payload_bucket_name")
+    return S3PayloadStore(bucket_name=settings["raw_payload_bucket_name"])
+
+
+def _repository_and_payload_store() -> tuple[DynamoJobRepository, S3PayloadStore]:
+    return _repository(), _payload_store()
 
 
 def _json_default(value: Any) -> Any:
@@ -57,11 +71,11 @@ def api_handler(event: dict[str, Any], _context: Any) -> dict[str, Any]:
     path = event.get("rawPath", "/")
     if method == "OPTIONS":
         return _response(200, {"ok": True})
+    if method == "GET" and path == "/health":
+        return _response(200, {"ok": True})
 
-    repository, _payload_store = _repository_and_payload_store()
     try:
-        if method == "GET" and path == "/health":
-            return _response(200, {"ok": True})
+        repository = _repository()
         if method == "GET" and path == "/jobs":
             query = event.get("queryStringParameters") or {}
             return _response(200, list_jobs(repository, query))
@@ -79,4 +93,7 @@ def api_handler(event: dict[str, Any], _context: Any) -> dict[str, Any]:
         return _response(404, {"error": f"Unknown job: {exc}"})
     except ValueError as exc:
         return _response(400, {"error": str(exc)})
+    except Exception:
+        logger.exception("Unhandled API error for %s %s", method, path)
+        return _response(500, {"error": "Internal server error"})
     return _response(404, {"error": f"No route for {method} {path}"})

@@ -12,6 +12,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 from job_finder.api import get_digest, list_jobs, list_sources, update_job
 from job_finder.collector import build_job_record
 from job_finder.discovery import discover_sources, extract_source_from_url
+from job_finder.lambda_handlers import api_handler
 from job_finder.models import DiscoverySettings, SourceConfig
 from job_finder.normalize import classify_us_location
 from job_finder.scoring import build_feedback_profile
@@ -616,6 +617,35 @@ class NormalizeTests(unittest.TestCase):
         self.assertEqual(classify_us_location("Remote - United States", "remote"), "confirmed")
         self.assertEqual(classify_us_location("Remote", "remote"), "assumed")
         self.assertEqual(classify_us_location("Remote - Canada", "remote"), "non_us")
+
+
+class LambdaHandlerTests(unittest.TestCase):
+    def test_health_route_skips_storage_initialization(self) -> None:
+        with patch("job_finder.lambda_handlers._repository", side_effect=RuntimeError("should not be called")):
+            response = api_handler(
+                {
+                    "rawPath": "/health",
+                    "requestContext": {"http": {"method": "GET"}},
+                },
+                None,
+            )
+
+        self.assertEqual(response["statusCode"], 200)
+        self.assertEqual(json.loads(response["body"]), {"ok": True})
+
+    def test_unexpected_repository_error_returns_500(self) -> None:
+        with patch("job_finder.lambda_handlers._repository", side_effect=RuntimeError("ddb init failed")):
+            response = api_handler(
+                {
+                    "rawPath": "/jobs",
+                    "requestContext": {"http": {"method": "GET"}},
+                    "queryStringParameters": {},
+                },
+                None,
+            )
+
+        self.assertEqual(response["statusCode"], 500)
+        self.assertEqual(json.loads(response["body"]), {"error": "Internal server error"})
 
 
 if __name__ == "__main__":

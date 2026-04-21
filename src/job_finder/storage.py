@@ -48,6 +48,35 @@ def _sort_source_records(records: list[SourceCatalogRecord]) -> list[SourceCatal
     )
 
 
+def _job_matches_filters(
+    record: JobRecord,
+    *,
+    status: str | None = None,
+    source_type: str | None = None,
+    company: str | None = None,
+    min_score: int | None = None,
+    eligible_only: bool = True,
+    only_new: bool = False,
+) -> bool:
+    if status and record.status != status:
+        return False
+    if source_type and record.source_type != source_type:
+        return False
+    if company and record.company.lower() != company.lower():
+        return False
+    if min_score is not None and record.score < min_score:
+        return False
+    if eligible_only and not record.is_eligible:
+        return False
+    if only_new and not record.is_new:
+        return False
+    return True
+
+
+def _sort_jobs(records: list[JobRecord]) -> list[JobRecord]:
+    return sorted(records, key=lambda item: (item.is_eligible, item.score, item.first_seen_at), reverse=True)
+
+
 class JobRepository(ABC):
     @abstractmethod
     def get_job(self, job_id: str) -> JobRecord | None:
@@ -176,23 +205,20 @@ class LocalJsonRepository(JobRepository):
         limit: int = 100,
     ) -> list[JobRecord]:
         records = [JobRecord.from_item(item) for item in self._read_json(self.jobs_path)]
-        filtered: list[JobRecord] = []
-        for record in records:
-            if status and record.status != status:
-                continue
-            if source_type and record.source_type != source_type:
-                continue
-            if company and record.company.lower() != company.lower():
-                continue
-            if min_score is not None and record.score < min_score:
-                continue
-            if eligible_only and not record.is_eligible:
-                continue
-            if only_new and not record.is_new:
-                continue
-            filtered.append(record)
-        filtered.sort(key=lambda item: (item.is_eligible, item.score, item.first_seen_at), reverse=True)
-        return filtered[:limit]
+        filtered = [
+            record
+            for record in records
+            if _job_matches_filters(
+                record,
+                status=status,
+                source_type=source_type,
+                company=company,
+                min_score=min_score,
+                eligible_only=eligible_only,
+                only_new=only_new,
+            )
+        ]
+        return _sort_jobs(filtered)[:limit]
 
     def update_job(self, job_id: str, *, status: str | None = None, notes: str | None = None) -> JobRecord | None:
         items = self._read_json(self.jobs_path)
@@ -367,6 +393,89 @@ class DynamoJobRepository(JobRepository):
             scan_kwargs["ExclusiveStartKey"] = response["LastEvaluatedKey"]
         return items
 
+    def _list_jobs_projected(
+        self,
+        *,
+        status: str | None = None,
+        source_type: str | None = None,
+        company: str | None = None,
+        min_score: int | None = None,
+        eligible_only: bool = True,
+        only_new: bool = False,
+        limit: int = 100,
+    ) -> list[JobRecord]:
+        from boto3.dynamodb.conditions import Attr
+
+        scan_kwargs: dict[str, Any] = {
+            "ProjectionExpression": "#job_id, #status, source_type, company, score, is_eligible, first_seen_at",
+            "ExpressionAttributeNames": {
+                "#job_id": "job_id",
+                "#status": "status",
+            },
+        }
+        filter_expression = None
+        if status:
+            filter_expression = Attr("status").eq(status)
+        if source_type:
+            clause = Attr("source_type").eq(source_type)
+            filter_expression = clause if filter_expression is None else filter_expression & clause
+        if min_score is not None:
+            clause = Attr("score").gte(min_score)
+            filter_expression = clause if filter_expression is None else filter_expression & clause
+        if eligible_only:
+            clause = Attr("is_eligible").eq(True)
+            filter_expression = clause if filter_expression is None else filter_expression & clause
+        if only_new:
+            clause = Attr("status").eq("new")
+            filter_expression = clause if filter_expression is None else filter_expression & clause
+        if filter_expression is not None:
+            scan_kwargs["FilterExpression"] = filter_expression
+
+        matches: list[tuple[tuple[bool, int, str], str]] = []
+        while True:
+            response = self.jobs_table.scan(**scan_kwargs)
+            for item in response.get("Items", []):
+                record = JobRecord(
+                    job_id=item["job_id"],
+                    source_job_id=None,
+                    canonical_url="",
+                    apply_url="",
+                    source_type=str(item.get("source_type") or ""),
+                    source_name="",
+                    company=str(item.get("company") or ""),
+                    title="",
+                    location_text="",
+                    remote_type="unknown",
+                    posted_date=None,
+                    first_seen_at=str(item.get("first_seen_at") or ""),
+                    last_seen_at="",
+                    description_text="",
+                    score=int(item.get("score") or 0),
+                    score_reasons=[],
+                    is_eligible=bool(item.get("is_eligible")),
+                    is_remote=False,
+                    is_us_based=False,
+                    status=str(item.get("status") or "new"),
+                )
+                if not _job_matches_filters(
+                    record,
+                    status=status,
+                    source_type=source_type,
+                    company=company,
+                    min_score=min_score,
+                    eligible_only=eligible_only,
+                    only_new=only_new,
+                ):
+                    continue
+                matches.append(((record.is_eligible, record.score, record.first_seen_at), record.job_id))
+            if "LastEvaluatedKey" not in response:
+                break
+            scan_kwargs["ExclusiveStartKey"] = response["LastEvaluatedKey"]
+
+        top_job_ids = [job_id for _sort_key, job_id in sorted(matches, reverse=True)[:limit]]
+        records = [self.get_job(job_id) for job_id in top_job_ids]
+        return [record for record in records if record is not None]
+
     def get_job(self, job_id: str) -> JobRecord | None:
         response = self.jobs_table.get_item(Key={"job_id": job_id})
         item = response.get("Item")
@@ -395,24 +504,31 @@ class DynamoJobRepository(JobRepository):
         only_new: bool = False,
         limit: int = 100,
     ) -> list[JobRecord]:
+        if limit <= 250:
+            return self._list_jobs_projected(
+                status=status,
+                source_type=source_type,
+                company=company,
+                min_score=min_score,
+                eligible_only=eligible_only,
+                only_new=only_new,
+                limit=limit,
+            )
         records = [JobRecord.from_item(item) for item in self._scan_table(self.jobs_table)]
-        filtered: list[JobRecord] = []
-        for record in records:
-            if status and record.status != status:
-                continue
-            if source_type and record.source_type != source_type:
-                continue
-            if company and record.company.lower() != company.lower():
-                continue
-            if min_score is not None and record.score < min_score:
-                continue
-            if eligible_only and not record.is_eligible:
-                continue
-            if only_new and not record.is_new:
-                continue
-            filtered.append(record)
-        filtered.sort(key=lambda item: (item.is_eligible, item.score, item.first_seen_at), reverse=True)
-        return filtered[:limit]
+        filtered = [
+            record
+            for record in records
+            if _job_matches_filters(
+                record,
+                status=status,
+                source_type=source_type,
+                company=company,
+                min_score=min_score,
+                eligible_only=eligible_only,
+                only_new=only_new,
+            )
+        ]
+        return _sort_jobs(filtered)[:limit]
 
     def update_job(self, job_id: str, *, status: str | None = None, notes: str | None = None) -> JobRecord | None:
         record = self.get_job(job_id)

@@ -108,6 +108,22 @@ async function fetchJobs() {
   elements.statusLine.textContent = `Showing ${state.filteredJobs.length} jobs`;
 }
 
+function updateJobInState(jobId, changes) {
+  let didUpdate = false;
+  state.jobs = state.jobs.map((job) => {
+    if (job.job_id !== jobId) {
+      return job;
+    }
+    didUpdate = true;
+    return { ...job, ...changes };
+  });
+  if (!didUpdate) {
+    return;
+  }
+  updateSummary();
+  applyClientFilters();
+}
+
 function renderDigest() {
   const digest = state.digest;
   elements.digestCompanies.innerHTML = "";
@@ -155,6 +171,7 @@ function renderSourceQuality() {
 }
 
 async function fetchInsights() {
+  elements.digestGenerated.textContent = "Loading insights...";
   const digestMinScore = Math.max(Number(elements.scoreFilter.value || "0"), 60);
   const digestUrl = new URL("/digest", state.apiBaseUrl);
   digestUrl.searchParams.set("limit", "8");
@@ -179,7 +196,15 @@ async function fetchInsights() {
 }
 
 async function refreshData() {
-  await Promise.all([fetchJobs(), fetchInsights()]);
+  await fetchJobs();
+  fetchInsights().catch((error) => {
+    elements.digestGenerated.textContent = "Unavailable";
+    elements.sourceQualityList.innerHTML = "";
+    const empty = document.createElement("p");
+    empty.className = "muted";
+    empty.textContent = error.message;
+    elements.sourceQualityList.append(empty);
+  });
 }
 
 async function updateJob(jobId, payload) {
@@ -192,7 +217,9 @@ async function updateJob(jobId, payload) {
   if (!response.ok) {
     throw new Error(`Update failed with ${response.status}`);
   }
-  await fetchJobs();
+  const result = await response.json();
+  const item = result.item || payload;
+  updateJobInState(jobId, item);
 }
 
 function truncate(text, length = 260) {
@@ -219,16 +246,17 @@ function renderJobs() {
     return;
   }
 
+  const fragment = document.createDocumentFragment();
   for (const job of state.filteredJobs) {
-    const fragment = elements.template.content.cloneNode(true);
-    const article = fragment.querySelector(".job-card");
+    const cardFragment = elements.template.content.cloneNode(true);
+    const article = cardFragment.querySelector(".job-card");
     article.dataset.status = job.status;
-    fragment.querySelector(".company").textContent = job.company;
-    fragment.querySelector("h2").textContent = job.title;
-    fragment.querySelector(".score-pill").textContent = job.score;
-    fragment.querySelector(".description").textContent = truncate(job.description_text, 280);
+    cardFragment.querySelector(".company").textContent = job.company;
+    cardFragment.querySelector("h2").textContent = job.title;
+    cardFragment.querySelector(".score-pill").textContent = job.score;
+    cardFragment.querySelector(".description").textContent = truncate(job.description_text, 280);
 
-    const meta = fragment.querySelector(".meta");
+    const meta = cardFragment.querySelector(".meta");
     [
       job.location_text || "Unknown location",
       job.remote_type,
@@ -237,22 +265,23 @@ function renderJobs() {
       job.source_type,
     ].forEach((text) => meta.append(makePill(text)));
 
-    const reasons = fragment.querySelector(".reasons");
+    const reasons = cardFragment.querySelector(".reasons");
     (job.score_reasons || []).slice(0, 5).forEach((reason) => reasons.append(makePill(reason)));
 
-    const notes = fragment.querySelector(".notes");
+    const notes = cardFragment.querySelector(".notes");
     notes.value = job.notes || "";
     notes.addEventListener("change", () => updateJob(job.job_id, { notes: notes.value }));
 
-    const applyLink = fragment.querySelector(".apply-link");
+    const applyLink = cardFragment.querySelector(".apply-link");
     applyLink.href = job.apply_url;
 
-    fragment.querySelector(".save").addEventListener("click", () => updateJob(job.job_id, { status: "saved", notes: notes.value }));
-    fragment.querySelector(".dismiss").addEventListener("click", () => updateJob(job.job_id, { status: "dismissed", notes: notes.value }));
-    fragment.querySelector(".applied").addEventListener("click", () => updateJob(job.job_id, { status: "applied", notes: notes.value }));
+    cardFragment.querySelector(".save").addEventListener("click", () => updateJob(job.job_id, { status: "saved", notes: notes.value }));
+    cardFragment.querySelector(".dismiss").addEventListener("click", () => updateJob(job.job_id, { status: "dismissed", notes: notes.value }));
+    cardFragment.querySelector(".applied").addEventListener("click", () => updateJob(job.job_id, { status: "applied", notes: notes.value }));
 
-    elements.jobsGrid.append(fragment);
+    fragment.append(cardFragment);
   }
+  elements.jobsGrid.append(fragment);
 }
 
 async function init() {
