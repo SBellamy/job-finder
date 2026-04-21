@@ -6,6 +6,9 @@ __pycache__/
 .terraform/
 terraform.tfstate
 terraform.tfstate.*
+*.tfvars
+*.auto.tfvars
+!*.example
 *.tfplan
 tfplan
 build/
