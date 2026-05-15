@@ -1,8 +1,10 @@
 from __future__ import annotations
 
 import json
+import os
 import sys
 import tempfile
+import types
 import unittest
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
@@ -13,7 +15,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 from job_finder.api import get_digest, get_freshness, list_jobs, list_sources, update_job
 from job_finder.collector import build_job_record
 from job_finder.discovery import discover_sources, extract_source_from_url
-from job_finder.lambda_handlers import api_handler
+from job_finder.lambda_handlers import _emit_crawl_metrics, api_handler
 from job_finder.models import CrawlRunRecord, DiscoverySettings, SourceConfig
 from job_finder.normalize import classify_us_location
 from job_finder.scoring import build_feedback_profile
@@ -789,6 +791,39 @@ class LambdaHandlerTests(unittest.TestCase):
 
         self.assertEqual(response["statusCode"], 500)
         self.assertEqual(json.loads(response["body"]), {"error": "Internal server error"})
+
+    def test_collector_metrics_include_completed_crawl_signal(self) -> None:
+        calls: list[dict[str, object]] = []
+
+        class FakeCloudWatch:
+            def put_metric_data(self, **kwargs: object) -> None:
+                calls.append(kwargs)
+
+        fake_boto3 = types.SimpleNamespace(client=lambda service_name: FakeCloudWatch())
+        run = CrawlRunRecord(
+            run_id="run-metrics",
+            started_at="2026-03-21T00:00:00+00:00",
+            finished_at="2026-03-21T00:03:00+00:00",
+            jobs_inserted=2,
+            errors_count=0,
+            run_status="completed",
+        )
+
+        with patch.dict(sys.modules, {"boto3": fake_boto3}), patch.dict(
+            os.environ,
+            {"PROJECT_NAME": "job-finder", "ENVIRONMENT": "dev"},
+        ):
+            _emit_crawl_metrics(run)
+
+        self.assertEqual(calls[0]["Namespace"], "JobFinder")
+        metric_data = calls[0]["MetricData"]
+        metric_names = {metric["MetricName"] for metric in metric_data}  # type: ignore[index]
+        self.assertIn("CompletedCrawls", metric_names)
+        self.assertIn("CrawlDurationSeconds", metric_names)
+        self.assertEqual(
+            metric_data[0]["Dimensions"],  # type: ignore[index]
+            [{"Name": "Project", "Value": "job-finder"}, {"Name": "Environment", "Value": "dev"}],
+        )
 
 
 if __name__ == "__main__":

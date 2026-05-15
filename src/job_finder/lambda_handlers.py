@@ -2,12 +2,15 @@ from __future__ import annotations
 
 import json
 import logging
+import os
+from datetime import datetime
 from decimal import Decimal
 from typing import Any
 
 from job_finder.api import get_digest, get_freshness, list_jobs, list_sources, update_job
 from job_finder.collector import collect_sources
 from job_finder.config import load_allowed_origin, load_discovery_settings, load_sources_from_event, load_storage_settings
+from job_finder.models import CrawlRunRecord
 from job_finder.storage import DynamoJobRepository, S3PayloadStore
 
 
@@ -44,6 +47,52 @@ def _json_default(value: Any) -> Any:
     raise TypeError(f"Object of type {value.__class__.__name__} is not JSON serializable")
 
 
+def _emit_crawl_metrics(run: CrawlRunRecord) -> None:
+    try:
+        import boto3
+
+        metric_data: list[dict[str, Any]] = [
+            {
+                "MetricName": "CrawlErrors",
+                "Value": run.errors_count,
+                "Unit": "Count",
+            },
+            {
+                "MetricName": "JobsInserted",
+                "Value": run.jobs_inserted,
+                "Unit": "Count",
+            },
+        ]
+        if run.run_status in {"completed", "completed_with_errors"}:
+            metric_data.append(
+                {
+                    "MetricName": "CompletedCrawls",
+                    "Value": 1,
+                    "Unit": "Count",
+                }
+            )
+        if run.finished_at:
+            started_at = datetime.fromisoformat(run.started_at)
+            finished_at = datetime.fromisoformat(run.finished_at)
+            metric_data.append(
+                {
+                    "MetricName": "CrawlDurationSeconds",
+                    "Value": max(0, int((finished_at - started_at).total_seconds())),
+                    "Unit": "Seconds",
+                }
+            )
+
+        dimensions = [
+            {"Name": "Project", "Value": os.environ.get("PROJECT_NAME", "job-finder")},
+            {"Name": "Environment", "Value": os.environ.get("ENVIRONMENT", "dev")},
+        ]
+        for item in metric_data:
+            item["Dimensions"] = dimensions
+        boto3.client("cloudwatch").put_metric_data(Namespace="JobFinder", MetricData=metric_data)
+    except Exception:
+        logger.exception("Failed to emit crawl metrics for %s", run.run_id)
+
+
 def _response(status_code: int, payload: dict[str, Any]) -> dict[str, Any]:
     origin = load_allowed_origin()
     return {
@@ -63,6 +112,7 @@ def collector_handler(event: dict[str, Any], _context: Any) -> dict[str, Any]:
     sources = load_sources_from_event(event)
     discovery_settings = load_discovery_settings(event)
     run = collect_sources(sources, repository, payload_store, discovery_settings=discovery_settings)
+    _emit_crawl_metrics(run)
     return _response(200, {"run": run.to_item()})
 
 

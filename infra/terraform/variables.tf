@@ -90,17 +90,17 @@ variable "collector_sources" {
 variable "collector_discovery" {
   description = "Discovery-first settings used to find ATS boards automatically."
   type = object({
-    enabled             = optional(bool, true)
-    strategy            = optional(string, "bing_rss")
-    strategies          = optional(list(string), [])
-    keywords            = optional(list(string), ["devops", "sre", "site reliability", "platform engineer", "cloud infrastructure", "terraform", "aws", "observability", "ansible", "automation"])
-    pages_per_query     = optional(number, 1)
-    max_sources_per_ats = optional(number, 40)
-    max_sources_per_run = optional(number, 60)
-    source_error_threshold = optional(number, 2)
+    enabled                        = optional(bool, true)
+    strategy                       = optional(string, "bing_rss")
+    strategies                     = optional(list(string), [])
+    keywords                       = optional(list(string), ["devops", "sre", "site reliability", "platform engineer", "cloud infrastructure", "terraform", "aws", "observability", "ansible", "automation"])
+    pages_per_query                = optional(number, 1)
+    max_sources_per_ats            = optional(number, 40)
+    max_sources_per_run            = optional(number, 60)
+    source_error_threshold         = optional(number, 2)
     max_low_value_rechecks_per_run = optional(number, 3)
-    low_value_retry_hours = optional(number, 48)
-    source_types        = optional(list(string), ["ashby", "greenhouse", "lever", "workable"])
+    low_value_retry_hours          = optional(number, 48)
+    source_types                   = optional(list(string), ["ashby", "greenhouse", "lever", "workable"])
   })
   default = {}
 }

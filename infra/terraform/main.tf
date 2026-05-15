@@ -16,6 +16,8 @@ locals {
     SOURCES_TABLE_NAME      = aws_dynamodb_table.sources.name
     RAW_PAYLOAD_BUCKET_NAME = aws_s3_bucket.raw_payloads.id
     ALLOWED_ORIGIN          = var.allowed_origin
+    PROJECT_NAME            = var.project_name
+    ENVIRONMENT             = var.environment
   }
   dashboard_assets = {
     "index.html" = {
@@ -221,6 +223,18 @@ resource "aws_iam_role_policy" "lambda" {
           "logs:PutLogEvents",
         ]
         Resource = "*"
+      },
+      {
+        Effect = "Allow"
+        Action = [
+          "cloudwatch:PutMetricData",
+        ]
+        Resource = "*"
+        Condition = {
+          StringEquals = {
+            "cloudwatch:namespace" = "JobFinder"
+          }
+        }
       }
     ]
   })
@@ -236,6 +250,48 @@ resource "aws_cloudwatch_log_group" "api" {
   name              = "/aws/lambda/${local.name_prefix}-api"
   retention_in_days = var.log_retention_days
   tags              = local.common_tags
+}
+
+resource "aws_cloudwatch_metric_alarm" "collector_freshness" {
+  alarm_name          = "${local.name_prefix}-collector-freshness"
+  alarm_description   = "No completed collector crawl has emitted in the last 24 hours."
+  namespace           = "JobFinder"
+  metric_name         = "CompletedCrawls"
+  comparison_operator = "LessThanThreshold"
+  threshold           = 1
+  evaluation_periods  = 1
+  datapoints_to_alarm = 1
+  period              = 86400
+  statistic           = "Sum"
+  treat_missing_data  = "breaching"
+
+  dimensions = {
+    Project     = var.project_name
+    Environment = var.environment
+  }
+
+  tags = local.common_tags
+}
+
+resource "aws_cloudwatch_metric_alarm" "collector_errors" {
+  alarm_name          = "${local.name_prefix}-collector-errors"
+  alarm_description   = "Collector emitted one or more crawl errors during the latest 24-hour window."
+  namespace           = "JobFinder"
+  metric_name         = "CrawlErrors"
+  comparison_operator = "GreaterThanOrEqualToThreshold"
+  threshold           = 1
+  evaluation_periods  = 1
+  datapoints_to_alarm = 1
+  period              = 86400
+  statistic           = "Sum"
+  treat_missing_data  = "notBreaching"
+
+  dimensions = {
+    Project     = var.project_name
+    Environment = var.environment
+  }
+
+  tags = local.common_tags
 }
 
 resource "aws_lambda_function" "collector" {
