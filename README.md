@@ -121,6 +121,7 @@ Start from `infra/terraform/terraform.tfvars.example`, copy it to `infra/terrafo
 
 - AWS region
 - environment name
+- dashboard URL for `allowed_origin`
 - discovery keywords and limits
 - collection schedule
 - optional budget alert email
