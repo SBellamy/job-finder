@@ -185,7 +185,7 @@ button:hover,
 
 .insights {
   display: grid;
-  grid-template-columns: 1.2fr 1fr;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
   gap: 16px;
   margin: 0 0 20px;
 }
@@ -271,6 +271,33 @@ button:hover,
   background: rgba(10, 125, 120, 0.12);
   color: var(--accent-2);
   font-weight: 700;
+}
+
+.freshness-grid {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 10px;
+}
+
+.freshness-grid > div {
+  padding: 12px;
+  border-radius: 16px;
+  background: rgba(255, 255, 255, 0.62);
+  border: 1px solid rgba(31, 27, 23, 0.08);
+}
+
+.freshness-grid strong {
+  display: block;
+  font-size: 1.3rem;
+}
+
+.freshness-detail {
+  margin-top: 12px;
+  line-height: 1.45;
+}
+
+.status-bad {
+  color: var(--danger);
 }
 
 .muted,

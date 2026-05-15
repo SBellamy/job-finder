@@ -4,6 +4,7 @@ const state = {
   filteredJobs: [],
   digest: null,
   sources: [],
+  freshness: null,
 };
 
 const elements = {
@@ -23,6 +24,11 @@ const elements = {
   digestCompanies: document.querySelector("#digestCompanies"),
   digestReasons: document.querySelector("#digestReasons"),
   sourceQualityList: document.querySelector("#sourceQualityList"),
+  freshnessStatus: document.querySelector("#freshnessStatus"),
+  freshnessLastRun: document.querySelector("#freshnessLastRun"),
+  freshnessInserted: document.querySelector("#freshnessInserted"),
+  freshnessUpdated: document.querySelector("#freshnessUpdated"),
+  freshnessDetail: document.querySelector("#freshnessDetail"),
   jobsGrid: document.querySelector("#jobsGrid"),
   template: document.querySelector("#jobCardTemplate"),
 };
@@ -213,8 +219,48 @@ function renderSourceQuality() {
   });
 }
 
+function formatRelativeAge(seconds) {
+  if (seconds === null || seconds === undefined) {
+    return "unknown";
+  }
+  if (seconds < 90) {
+    return "just now";
+  }
+  const minutes = Math.round(seconds / 60);
+  if (minutes < 90) {
+    return `${minutes}m ago`;
+  }
+  const hours = Math.round(minutes / 60);
+  if (hours < 48) {
+    return `${hours}h ago`;
+  }
+  return `${Math.round(hours / 24)}d ago`;
+}
+
+function renderFreshness() {
+  const freshness = state.freshness;
+  elements.freshnessStatus.classList.toggle("status-bad", !freshness?.ok);
+  if (!freshness?.latest_run) {
+    elements.freshnessStatus.textContent = "Unavailable";
+    elements.freshnessLastRun.textContent = "No completed crawl";
+    elements.freshnessInserted.textContent = "0";
+    elements.freshnessUpdated.textContent = "0";
+    elements.freshnessDetail.textContent = freshness?.error || "No crawl status available.";
+    return;
+  }
+
+  const latestRun = freshness.latest_run;
+  const lastRunDate = new Date(latestRun.finished_at || latestRun.started_at);
+  elements.freshnessStatus.textContent = freshness.ok ? "Fresh" : "Stale";
+  elements.freshnessLastRun.textContent = formatRelativeAge(freshness.age_seconds);
+  elements.freshnessInserted.textContent = String(latestRun.jobs_inserted || 0);
+  elements.freshnessUpdated.textContent = String(latestRun.jobs_updated || 0);
+  elements.freshnessDetail.textContent = `${latestRun.run_status || "completed"} • ${latestRun.jobs_found || 0} found • ${latestRun.pages_checked || 0} sources • ${lastRunDate.toLocaleString()}`;
+}
+
 async function fetchInsights() {
   elements.digestGenerated.textContent = "Loading insights...";
+  elements.freshnessStatus.textContent = "Checking...";
   const digestMinScore = Math.max(Number(elements.scoreFilter.value || "0"), 60);
   const digestUrl = new URL("/digest", state.apiBaseUrl);
   digestUrl.searchParams.set("limit", "8");
@@ -224,24 +270,33 @@ async function fetchInsights() {
   sourcesUrl.searchParams.set("limit", "8");
   sourcesUrl.searchParams.set("statuses", "active,candidate,low_value");
 
-  const [digestResponse, sourcesResponse] = await Promise.all([
+  const freshnessUrl = new URL("/health/freshness", state.apiBaseUrl);
+  freshnessUrl.searchParams.set("max_age_hours", "24");
+
+  const [digestResponse, sourcesResponse, freshnessResponse] = await Promise.all([
     fetch(digestUrl, { cache: "no-store" }),
     fetch(sourcesUrl, { cache: "no-store" }),
+    fetch(freshnessUrl, { cache: "no-store" }),
   ]);
-  if (!digestResponse.ok || !sourcesResponse.ok) {
-    throw new Error(`Insights ${digestResponse.status}/${sourcesResponse.status}`);
+  if (!digestResponse.ok || !sourcesResponse.ok || !freshnessResponse.ok) {
+    throw new Error(`Insights ${digestResponse.status}/${sourcesResponse.status}/${freshnessResponse.status}`);
   }
   state.digest = await digestResponse.json();
   const sourcesPayload = await sourcesResponse.json();
+  state.freshness = await freshnessResponse.json();
   state.sources = sourcesPayload.items || [];
   renderDigest();
   renderSourceQuality();
+  renderFreshness();
 }
 
 async function refreshData() {
   await fetchJobs();
   fetchInsights().catch((error) => {
     elements.digestGenerated.textContent = "Unavailable";
+    elements.freshnessStatus.textContent = "Unavailable";
+    elements.freshnessStatus.classList.add("status-bad");
+    elements.freshnessDetail.textContent = error.message;
     elements.sourceQualityList.innerHTML = "";
     const empty = document.createElement("p");
     empty.className = "muted";
