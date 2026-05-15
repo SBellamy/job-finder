@@ -87,10 +87,10 @@ def _sort_jobs(records: list[JobRecord], *, sort_by: str = "ranked") -> list[Job
     if sort_by == "newest":
         return sorted(
             records,
-            key=lambda item: (item.first_seen_at, item.last_seen_at, item.score, item.is_eligible),
+            key=lambda item: (item.first_seen_at, item.last_seen_at, item.posted_date or "", item.score, item.is_eligible),
             reverse=True,
         )
-    return sorted(records, key=lambda item: (item.is_eligible, item.score, item.first_seen_at), reverse=True)
+    return sorted(records, key=lambda item: (item.is_eligible, item.score, item.first_seen_at, item.posted_date or ""), reverse=True)
 
 
 class JobRepository(ABC):
@@ -551,11 +551,12 @@ class DynamoJobRepository(JobRepository):
                 "#job_id, source_job_id, canonical_url, apply_url, source_type, source_name, "
                 "company, title, location_text, remote_type, posted_date, first_seen_at, "
                 "last_seen_at, score, score_reasons, is_eligible, is_remote, is_us_based, "
-                "us_location_confidence, #status, notes, hash_fingerprint, description_excerpt"
+                "us_location_confidence, #status, notes, hash_fingerprint, description_excerpt, #metadata"
             ),
             "ExpressionAttributeNames": {
                 "#job_id": "job_id",
                 "#status": "status",
+                "#metadata": "metadata",
             },
         }
         filter_expression = None
@@ -604,6 +605,7 @@ class DynamoJobRepository(JobRepository):
                     status=str(item.get("status") or "new"),
                     notes=str(item.get("notes") or ""),
                     hash_fingerprint=str(item.get("hash_fingerprint") or ""),
+                    metadata=dict(item.get("metadata") or {}),
                 )
                 if not _job_matches_filters(
                     record,
@@ -616,9 +618,9 @@ class DynamoJobRepository(JobRepository):
                 ):
                     continue
                 if sort_by == "newest":
-                    sort_key = (record.first_seen_at, record.score, record.is_eligible)
+                    sort_key = (record.first_seen_at, record.last_seen_at, record.posted_date or "", record.score, record.is_eligible)
                 else:
-                    sort_key = (record.is_eligible, record.score, record.first_seen_at)
+                    sort_key = (record.is_eligible, record.score, record.first_seen_at, record.posted_date or "")
                 matches.append((sort_key, record.job_id, record))
             if "LastEvaluatedKey" not in response:
                 break
@@ -700,33 +702,17 @@ class DynamoJobRepository(JobRepository):
         offset: int = 0,
         limit: int = 100,
     ) -> list[JobRecord]:
-        if limit <= 250:
-            return self._list_jobs_projected(
-                status=status,
-                source_type=source_type,
-                company=company,
-                min_score=min_score,
-                eligible_only=eligible_only,
-                only_new=only_new,
-                sort_by=sort_by,
-                offset=offset,
-                limit=limit,
-            )
-        records = [JobRecord.from_item(item) for item in self._scan_table(self.jobs_table)]
-        filtered = [
-            record
-            for record in records
-            if _job_matches_filters(
-                record,
-                status=status,
-                source_type=source_type,
-                company=company,
-                min_score=min_score,
-                eligible_only=eligible_only,
-                only_new=only_new,
-            )
-        ]
-        return _sort_jobs(filtered, sort_by=sort_by)[offset : offset + limit]
+        return self._list_jobs_projected(
+            status=status,
+            source_type=source_type,
+            company=company,
+            min_score=min_score,
+            eligible_only=eligible_only,
+            only_new=only_new,
+            sort_by=sort_by,
+            offset=offset,
+            limit=limit,
+        )
 
     def update_job(
         self,

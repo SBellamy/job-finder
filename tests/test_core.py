@@ -16,7 +16,7 @@ from job_finder.api import export_jobs, get_digest, get_freshness, get_job, list
 from job_finder.collector import build_job_record
 from job_finder.discovery import discover_sources, extract_source_from_url
 from job_finder.lambda_handlers import _emit_crawl_metrics, api_handler
-from job_finder.models import CrawlRunRecord, DiscoverySettings, SourceConfig, stable_source_id
+from job_finder.models import CrawlRunRecord, DiscoverySettings, JobRecord, SourceConfig, stable_source_id
 from job_finder.normalize import classify_us_location
 from job_finder.scoring import build_feedback_profile
 from job_finder.storage import LocalJsonRepository, LocalPayloadStore
@@ -403,6 +403,44 @@ class LocalRepositoryTests(unittest.TestCase):
             payload = list_jobs(repo, {"eligible_only": "true", "limit": "10", "sort": "newest"})
             self.assertEqual(payload["items"][0]["job_id"], newer_lower_score.job_id)
 
+    def test_newest_sort_uses_last_seen_as_tie_breaker(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            repo = LocalJsonRepository(
+                jobs_path=str(Path(temp_dir) / "jobs.json"),
+                runs_path=str(Path(temp_dir) / "runs.json"),
+            )
+            older_seen = build_job_record(
+                make_source(),
+                {
+                    "source_job_id": "same-crawl-old",
+                    "title": "Platform Engineer",
+                    "location_text": "Remote, United States",
+                    "description_text": "AWS Terraform automation",
+                    "apply_url": "https://example.com/jobs/same-crawl-old",
+                },
+                raw_payload_key=None,
+            )
+            newer_seen = build_job_record(
+                make_source(company="FreshCo"),
+                {
+                    "source_job_id": "same-crawl-new",
+                    "title": "Platform Engineer",
+                    "location_text": "Remote, United States",
+                    "description_text": "AWS Terraform automation",
+                    "apply_url": "https://example.com/jobs/same-crawl-new",
+                },
+                raw_payload_key=None,
+            )
+            older_seen.first_seen_at = "2026-03-21T10:00:00+00:00"
+            newer_seen.first_seen_at = "2026-03-21T10:00:00+00:00"
+            older_seen.last_seen_at = "2026-03-21T10:01:00+00:00"
+            newer_seen.last_seen_at = "2026-03-21T10:02:00+00:00"
+            repo.upsert_job(older_seen)
+            repo.upsert_job(newer_seen)
+
+            listed = repo.list_jobs(limit=10, eligible_only=True, only_new=False, sort_by="newest")
+            self.assertEqual(listed[0].job_id, newer_seen.job_id)
+
     def test_jobs_api_returns_cursor_for_next_page(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
             repo = LocalJsonRepository(
@@ -451,6 +489,41 @@ class LocalRepositoryTests(unittest.TestCase):
                         "cursor": first_page["next_cursor"],
                     },
                 )
+
+    def test_jobs_api_can_return_more_than_one_hundred_jobs(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            repo = LocalJsonRepository(
+                jobs_path=str(Path(temp_dir) / "jobs.json"),
+                runs_path=str(Path(temp_dir) / "runs.json"),
+            )
+            for index in range(125):
+                repo.upsert_job(
+                    JobRecord(
+                        job_id=f"bulk-{index}",
+                        source_job_id=f"bulk-{index}",
+                        canonical_url=f"https://example.com/jobs/bulk-{index}",
+                        apply_url=f"https://example.com/jobs/bulk-{index}",
+                        source_type="lever",
+                        source_name="BulkCo:bulk",
+                        company="BulkCo",
+                        title="Platform Engineer",
+                        location_text="Remote, United States",
+                        remote_type="remote",
+                        posted_date=None,
+                        first_seen_at=f"2026-03-21T10:{index // 60:02d}:{index % 60:02d}+00:00",
+                        last_seen_at=f"2026-03-21T10:{index // 60:02d}:{index % 60:02d}+00:00",
+                        description_text="AWS Terraform automation",
+                        score=80,
+                        score_reasons=["remote US confirmed"],
+                        is_eligible=True,
+                        is_remote=True,
+                        is_us_based=True,
+                    )
+                )
+
+            payload = list_jobs(repo, {"eligible_only": "true", "limit": "125", "sort": "newest"})
+            self.assertEqual(payload["count"], 125)
+            self.assertIsNone(payload["next_cursor"])
 
     def test_feedback_jobs_only_include_labeled_history(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:

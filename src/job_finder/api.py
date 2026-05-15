@@ -17,7 +17,7 @@ from job_finder.storage import source_quality_score
 VALID_STATUSES = {"new", "saved", "dismissed", "applied"}
 VALID_JOB_SORTS = {"ranked", "newest"}
 DEFAULT_JOBS_LIMIT = 50
-MAX_JOBS_LIMIT = 100
+MAX_JOBS_LIMIT = 1000
 MAX_EXPORT_LIMIT = 1000
 VALID_DISMISS_REASONS = {
     "already_seen",
@@ -76,8 +76,12 @@ def _decode_cursor(value: str | None, *, expected_signature: str) -> int:
     return offset
 
 
+def _bounded_limit(value: str | None, *, default: int, maximum: int) -> int:
+    return max(1, min(int(value or str(default)), maximum))
+
+
 def list_jobs(repository: JobRepository, query: dict[str, str | None]) -> dict[str, Any]:
-    limit = min(int(query.get("limit") or str(DEFAULT_JOBS_LIMIT)), MAX_JOBS_LIMIT)
+    limit = _bounded_limit(query.get("limit"), default=DEFAULT_JOBS_LIMIT, maximum=MAX_JOBS_LIMIT)
     min_score = query.get("min_score")
     sort_by = (query.get("sort") or "ranked").strip().lower()
     if sort_by not in VALID_JOB_SORTS:
@@ -156,7 +160,7 @@ def export_jobs(repository: JobRepository, query: dict[str, str | None]) -> dict
         eligible_only=(query.get("eligible_only", "false").lower() != "false"),
         only_new=(query.get("only_new", "false").lower() == "true"),
         sort_by=sort_by,
-        limit=min(int(query.get("limit") or str(MAX_EXPORT_LIMIT)), MAX_EXPORT_LIMIT),
+        limit=_bounded_limit(query.get("limit"), default=MAX_EXPORT_LIMIT, maximum=MAX_EXPORT_LIMIT),
     )
     rows = [_job_export_row(job) for job in jobs]
     filename = f"job-finder-{datetime.now(UTC).strftime('%Y%m%dT%H%M%SZ')}.{export_format}"

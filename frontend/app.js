@@ -8,6 +8,8 @@ const state = {
   nextCursor: null,
 };
 
+const JOB_PAGE_SIZE = 1000;
+
 const elements = {
   eligibleCount: document.querySelector("#eligibleCount"),
   newCount: document.querySelector("#newCount"),
@@ -64,7 +66,7 @@ function buildJobsUrl(cursor = null) {
   }
   url.searchParams.set("eligible_only", "true");
   url.searchParams.set("only_new", elements.onlyNewToggle.checked ? "true" : "false");
-  url.searchParams.set("limit", "50");
+  url.searchParams.set("limit", String(JOB_PAGE_SIZE));
   if (cursor) {
     url.searchParams.set("cursor", cursor);
   }
@@ -134,7 +136,11 @@ function sortJobs(jobs) {
       if (newestDelta !== 0) {
         return newestDelta;
       }
-      return right.score - left.score;
+      return (
+        parseSortDate(right.last_seen_at) - parseSortDate(left.last_seen_at) ||
+        parseSortDate(right.posted_date) - parseSortDate(left.posted_date) ||
+        right.score - left.score
+      );
     });
     return sorted;
   }
@@ -181,6 +187,11 @@ function updateLoadMoreButton() {
   elements.loadMoreButton.textContent = "Load more jobs";
 }
 
+function updateLoadedStatus() {
+  const suffix = state.nextCursor ? " - more available" : "";
+  elements.statusLine.textContent = `Showing ${state.filteredJobs.length} loaded jobs${suffix}`;
+}
+
 async function fetchJobs({ append = false } = {}) {
   const url = buildJobsUrl(append ? state.nextCursor : null);
   elements.statusLine.textContent = append ? "Loading more jobs..." : "Loading jobs...";
@@ -199,7 +210,7 @@ async function fetchJobs({ append = false } = {}) {
   updateSourceFilter();
   applyClientFilters();
   updateLoadMoreButton();
-  elements.statusLine.textContent = `Showing ${state.filteredJobs.length} loaded jobs`;
+  updateLoadedStatus();
 }
 
 function updateJobInState(jobId, changes) {
@@ -567,6 +578,17 @@ async function init() {
   state.apiBaseUrl = config.apiBaseUrl;
   elements.apiLine.textContent = `API: ${state.apiBaseUrl}`;
 
+  const handleFilterChange = (element) => {
+    if (element === elements.searchInput || element === elements.sourceFilter) {
+      applyClientFilters();
+      updateLoadedStatus();
+      return;
+    }
+    refreshData().catch((error) => {
+      elements.statusLine.textContent = error.message;
+    });
+  };
+
   [
     elements.searchInput,
     elements.statusFilter,
@@ -575,19 +597,9 @@ async function init() {
     elements.sortFilter,
     elements.onlyNewToggle,
   ].forEach((element) => {
-    element.addEventListener("input", () => {
-      if (element === elements.searchInput || element === elements.sourceFilter) {
-        applyClientFilters();
-        return;
-      }
-      refreshData().catch((error) => {
-        elements.statusLine.textContent = error.message;
-      });
-    });
-    element.addEventListener("change", () => {
-      if (element === elements.searchInput || element === elements.sourceFilter) {
-        applyClientFilters();
-      }
+    const eventName = element === elements.searchInput || element === elements.scoreFilter ? "input" : "change";
+    element.addEventListener(eventName, () => {
+      handleFilterChange(element);
     });
   });
 
