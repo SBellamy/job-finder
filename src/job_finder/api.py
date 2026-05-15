@@ -11,6 +11,16 @@ from job_finder.storage import source_quality_score
 
 VALID_STATUSES = {"new", "saved", "dismissed", "applied"}
 VALID_JOB_SORTS = {"ranked", "newest"}
+VALID_DISMISS_REASONS = {
+    "already_seen",
+    "low_priority",
+    "not_infrastructure",
+    "not_us",
+    "off_target",
+    "too_junior",
+    "too_senior",
+    "weak_company_fit",
+}
 
 
 def _parse_iso_datetime(value: str | None) -> datetime | None:
@@ -25,8 +35,10 @@ def _parse_iso_datetime(value: str | None) -> datetime | None:
 def _job_summary(job: Any) -> dict[str, Any]:
     item = job.to_item()
     description = str(item.pop("description_text", "") or "")
+    metadata = dict(item.get("metadata") or {})
     item.pop("metadata", None)
     item.pop("raw_payload_s3_key", None)
+    item["dismiss_reason"] = metadata.get("dismiss_reason", "")
     item["description_excerpt"] = text_excerpt(description)
     item["has_description"] = bool(description.strip())
     return item
@@ -94,9 +106,12 @@ def get_freshness(repository: JobRepository, query: dict[str, str | None]) -> di
 def update_job(repository: JobRepository, job_id: str, payload: dict[str, Any]) -> dict[str, Any]:
     status = payload.get("status")
     notes = payload.get("notes")
+    dismiss_reason = payload.get("dismiss_reason")
     if status is not None and status not in VALID_STATUSES:
         raise ValueError(f"Invalid status: {status}")
-    record = repository.update_job(job_id, status=status, notes=notes)
+    if dismiss_reason is not None and dismiss_reason not in VALID_DISMISS_REASONS and dismiss_reason != "":
+        raise ValueError(f"Invalid dismiss_reason: {dismiss_reason}")
+    record = repository.update_job(job_id, status=status, notes=notes, dismiss_reason=dismiss_reason)
     if record is None:
         raise KeyError(job_id)
     return record.to_item()

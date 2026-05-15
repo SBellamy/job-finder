@@ -170,13 +170,26 @@ function updateJobInState(jobId, changes) {
       return job;
     }
     didUpdate = true;
-    return { ...job, ...changes };
+    const metadata = { ...(job.metadata || {}), ...(changes.metadata || {}) };
+    if (Object.hasOwn(changes, "dismiss_reason")) {
+      if (changes.dismiss_reason) {
+        metadata.dismiss_reason = changes.dismiss_reason;
+      } else {
+        delete metadata.dismiss_reason;
+      }
+    }
+    const dismissReason = Object.hasOwn(changes, "dismiss_reason") ? changes.dismiss_reason : metadata.dismiss_reason || "";
+    return { ...job, ...changes, metadata, dismiss_reason: dismissReason };
   });
   if (!didUpdate) {
     return;
   }
   updateSummary();
   applyClientFilters();
+}
+
+function getDismissReason(job) {
+  return job.dismiss_reason || job.metadata?.dismiss_reason || "";
 }
 
 function renderDigest() {
@@ -322,7 +335,10 @@ async function updateJob(jobId, payload) {
     throw new Error(`Update failed with ${response.status}`);
   }
   const result = await response.json();
-  const item = result.item || payload;
+  const item = { ...(result.item || payload) };
+  if (Object.hasOwn(payload, "dismiss_reason")) {
+    item.dismiss_reason = payload.dismiss_reason;
+  }
   updateJobInState(jobId, item);
 }
 
@@ -395,11 +411,23 @@ function renderJobs() {
     notes.value = job.notes || "";
     notes.addEventListener("change", () => updateJob(job.job_id, { notes: notes.value }));
 
+    const dismissReason = cardFragment.querySelector(".dismiss-reason");
+    dismissReason.value = getDismissReason(job);
+    dismissReason.addEventListener("change", () => {
+      if (job.status === "dismissed") {
+        updateJob(job.job_id, { dismiss_reason: dismissReason.value }).catch((error) => {
+          elements.statusLine.textContent = error.message;
+        });
+      }
+    });
+
     const applyLink = cardFragment.querySelector(".apply-link");
     applyLink.href = job.apply_url;
 
     cardFragment.querySelector(".save").addEventListener("click", () => updateJob(job.job_id, { status: "saved", notes: notes.value }));
-    cardFragment.querySelector(".dismiss").addEventListener("click", () => updateJob(job.job_id, { status: "dismissed", notes: notes.value }));
+    cardFragment.querySelector(".dismiss").addEventListener("click", () =>
+      updateJob(job.job_id, { status: "dismissed", notes: notes.value, dismiss_reason: dismissReason.value })
+    );
     cardFragment.querySelector(".applied").addEventListener("click", () => updateJob(job.job_id, { status: "applied", notes: notes.value }));
 
     const detailsButton = cardFragment.querySelector(".details");

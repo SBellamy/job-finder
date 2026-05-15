@@ -160,6 +160,13 @@ NEGATIVE_FEEDBACK_MULTIPLIERS = {
     "dismissed": -1,
 }
 
+DISMISS_REASON_TOKEN_MULTIPLIERS = {
+    "not_infrastructure": 2,
+    "off_target": 2,
+    "too_junior": 1,
+    "too_senior": 1,
+}
+
 ROLE_PROFILE_KEYWORDS = {
     "qa": {
         "quality assurance",
@@ -267,9 +274,11 @@ def build_feedback_profile(jobs: Iterable[JobRecord]) -> FeedbackProfile:
             company_weights[company_key] += 2 * multiplier
         elif job.status in NEGATIVE_FEEDBACK_MULTIPLIERS:
             multiplier = NEGATIVE_FEEDBACK_MULTIPLIERS[job.status]
+            dismiss_reason = str(job.metadata.get("dismiss_reason") or "")
+            reason_multiplier = DISMISS_REASON_TOKEN_MULTIPLIERS.get(dismiss_reason, 1)
             for token in set(_title_tokens(job.title)):
-                title_token_weights[token] += 6 * multiplier
-            company_weights[company_key] += multiplier
+                title_token_weights[token] += 6 * multiplier * reason_multiplier
+            company_weights[company_key] += multiplier * (3 if dismiss_reason == "weak_company_fit" else 1)
     return FeedbackProfile(
         title_token_weights={token: max(-18, min(18, weight)) for token, weight in title_token_weights.items()},
         company_weights={company: max(-4, min(6, weight)) for company, weight in company_weights.items()},

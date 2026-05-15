@@ -231,6 +231,37 @@ class BuildJobRecordTests(unittest.TestCase):
         )
         self.assertLess(similar.score, without_feedback.score)
 
+    def test_dismiss_reason_strengthens_negative_title_feedback(self) -> None:
+        dismissed = build_job_record(
+            make_source(),
+            {
+                "source_job_id": "786",
+                "title": "Customer Operations Manager",
+                "location_text": "Remote, United States",
+                "description_text": "AWS automation workflows for support operations",
+                "apply_url": "https://example.com/jobs/786",
+            },
+            raw_payload_key=None,
+        )
+        dismissed.status = "dismissed"
+        dismissed.metadata["dismiss_reason"] = "not_infrastructure"
+        feedback_profile = build_feedback_profile([dismissed])
+
+        similar = build_job_record(
+            make_source(),
+            {
+                "source_job_id": "787",
+                "title": "Customer Operations Lead",
+                "location_text": "Remote, United States",
+                "description_text": "AWS automation workflows",
+                "apply_url": "https://example.com/jobs/787",
+            },
+            raw_payload_key=None,
+            feedback_profile=feedback_profile,
+        )
+
+        self.assertIn("similar to dismissed roles", similar.score_reasons)
+
 
 class LocalRepositoryTests(unittest.TestCase):
     def test_status_updates_do_not_change_scrape_timestamps(self) -> None:
@@ -258,6 +289,47 @@ class LocalRepositoryTests(unittest.TestCase):
             self.assertEqual(updated.status, "saved")
             self.assertEqual(updated.notes, "Strong fit")
             self.assertEqual(updated.last_seen_at, job.last_seen_at)
+
+    def test_dismiss_reason_is_persisted_and_preserved_across_upserts(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            repo = LocalJsonRepository(
+                jobs_path=str(Path(temp_dir) / "jobs.json"),
+                runs_path=str(Path(temp_dir) / "runs.json"),
+            )
+            job = build_job_record(
+                make_source(),
+                {
+                    "source_job_id": "125",
+                    "title": "Platform Engineer",
+                    "location_text": "Remote, United States",
+                    "description_text": "AWS Terraform",
+                    "apply_url": "https://example.com/jobs/125",
+                },
+                raw_payload_key=None,
+            )
+            repo.upsert_job(job)
+
+            updated = repo.update_job(job.job_id, status="dismissed", dismiss_reason="not_infrastructure")
+            assert updated is not None
+            self.assertEqual(updated.metadata["dismiss_reason"], "not_infrastructure")
+            self.assertIn("status_updated_at", updated.metadata)
+
+            refreshed = build_job_record(
+                make_source(),
+                {
+                    "source_job_id": "125",
+                    "title": "Platform Engineer",
+                    "location_text": "Remote, United States",
+                    "description_text": "AWS Terraform observability",
+                    "apply_url": "https://example.com/jobs/125",
+                },
+                raw_payload_key=None,
+            )
+            repo.upsert_job(refreshed)
+            persisted = repo.get_job(job.job_id)
+            assert persisted is not None
+            self.assertEqual(persisted.status, "dismissed")
+            self.assertEqual(persisted.metadata["dismiss_reason"], "not_infrastructure")
 
     def test_repository_sorts_by_score_before_recency(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
@@ -449,9 +521,16 @@ class LocalRepositoryTests(unittest.TestCase):
             updated = update_job(repo, good_job.job_id, {"status": "applied", "notes": "Sent application"})
             self.assertEqual(updated["status"], "applied")
             self.assertEqual(updated["notes"], "Sent application")
+            self.assertIn("applied_at", updated["metadata"])
 
             stored = json.loads(jobs_path.read_text(encoding="utf-8"))
             self.assertEqual(stored[0]["status"], "applied")
+
+            dismissed = update_job(repo, good_job.job_id, {"status": "dismissed", "dismiss_reason": "off_target"})
+            self.assertEqual(dismissed["metadata"]["dismiss_reason"], "off_target")
+
+            with self.assertRaises(ValueError):
+                update_job(repo, good_job.job_id, {"dismiss_reason": "bad_reason"})
 
     def test_jobs_list_uses_summary_shape_and_detail_keeps_full_description(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:

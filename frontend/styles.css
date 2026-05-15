@@ -118,7 +118,8 @@ h1 {
 
 .toolbar input,
 .toolbar select,
-.job-card textarea {
+.job-card textarea,
+.dismiss-reason-field select {
   width: 100%;
   border: 1px solid rgba(31, 27, 23, 0.12);
   background: rgba(255, 255, 255, 0.78);
@@ -377,6 +378,13 @@ button:hover,
   margin: 0;
   color: var(--muted);
   line-height: 1.55;
+}
+
+.dismiss-reason-field {
+  display: grid;
+  gap: 6px;
+  color: var(--muted);
+  font-size: 0.9rem;
 }
 
 .actions {

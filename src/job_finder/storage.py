@@ -113,7 +113,14 @@ class JobRepository(ABC):
         raise NotImplementedError
 
     @abstractmethod
-    def update_job(self, job_id: str, *, status: str | None = None, notes: str | None = None) -> JobRecord | None:
+    def update_job(
+        self,
+        job_id: str,
+        *,
+        status: str | None = None,
+        notes: str | None = None,
+        dismiss_reason: str | None = None,
+    ) -> JobRecord | None:
         raise NotImplementedError
 
     @abstractmethod
@@ -210,6 +217,7 @@ class LocalJsonRepository(JobRepository):
                 job.first_seen_at = existing.first_seen_at
                 job.status = existing.status
                 job.notes = existing.notes
+                job.metadata = {**job.metadata, **existing.metadata}
                 items[index] = job.to_item()
                 self._write_json(self.jobs_path, items)
                 return "updated"
@@ -254,7 +262,14 @@ class LocalJsonRepository(JobRepository):
         ]
         return _sort_jobs(records, sort_by="newest")[:limit]
 
-    def update_job(self, job_id: str, *, status: str | None = None, notes: str | None = None) -> JobRecord | None:
+    def update_job(
+        self,
+        job_id: str,
+        *,
+        status: str | None = None,
+        notes: str | None = None,
+        dismiss_reason: str | None = None,
+    ) -> JobRecord | None:
         items = self._read_json(self.jobs_path)
         for index, item in enumerate(items):
             if item["job_id"] != job_id:
@@ -262,8 +277,16 @@ class LocalJsonRepository(JobRepository):
             record = JobRecord.from_item(item)
             if status is not None:
                 record.status = status
+                record.metadata["status_updated_at"] = utc_now_iso()
+                if status == "applied":
+                    record.metadata["applied_at"] = record.metadata.get("applied_at") or record.metadata["status_updated_at"]
             if notes is not None:
                 record.notes = notes
+            if dismiss_reason is not None:
+                if dismiss_reason:
+                    record.metadata["dismiss_reason"] = dismiss_reason
+                else:
+                    record.metadata.pop("dismiss_reason", None)
             items[index] = record.to_item()
             self._write_json(self.jobs_path, items)
             return record
@@ -606,6 +629,7 @@ class DynamoJobRepository(JobRepository):
             job.first_seen_at = existing.first_seen_at
             job.status = existing.status
             job.notes = existing.notes
+            job.metadata = {**job.metadata, **existing.metadata}
             operation = "updated"
         else:
             operation = "inserted"
@@ -651,14 +675,29 @@ class DynamoJobRepository(JobRepository):
         ]
         return _sort_jobs(filtered, sort_by=sort_by)[:limit]
 
-    def update_job(self, job_id: str, *, status: str | None = None, notes: str | None = None) -> JobRecord | None:
+    def update_job(
+        self,
+        job_id: str,
+        *,
+        status: str | None = None,
+        notes: str | None = None,
+        dismiss_reason: str | None = None,
+    ) -> JobRecord | None:
         record = self.get_job(job_id)
         if record is None:
             return None
         if status is not None:
             record.status = status
+            record.metadata["status_updated_at"] = utc_now_iso()
+            if status == "applied":
+                record.metadata["applied_at"] = record.metadata.get("applied_at") or record.metadata["status_updated_at"]
         if notes is not None:
             record.notes = notes
+        if dismiss_reason is not None:
+            if dismiss_reason:
+                record.metadata["dismiss_reason"] = dismiss_reason
+            else:
+                record.metadata.pop("dismiss_reason", None)
         self.jobs_table.put_item(Item=record.to_item())
         return record
 
