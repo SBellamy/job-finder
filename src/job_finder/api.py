@@ -160,3 +160,22 @@ def list_sources(repository: JobRepository, query: dict[str, str | None]) -> dic
         payload["quality_score"] = source_quality_score(record)
         items.append(payload)
     return {"items": items, "count": len(items)}
+
+
+def update_source_control(repository: JobRepository, source_id: str, payload: dict[str, Any]) -> dict[str, Any]:
+    blocked = payload.get("blocked")
+    priority = payload.get("priority")
+    note = payload.get("note")
+    if blocked is not None and not isinstance(blocked, bool):
+        raise ValueError("blocked must be a boolean")
+    if priority is not None:
+        priority = max(-100, min(100, int(priority)))
+    if note is not None:
+        note = str(note)
+
+    record = repository.update_source_control(source_id, blocked=blocked, priority=priority, note=note)
+    if record is None:
+        raise KeyError(source_id)
+    item = record.to_item()
+    item["quality_score"] = source_quality_score(record)
+    return item

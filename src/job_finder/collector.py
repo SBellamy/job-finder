@@ -73,6 +73,22 @@ def _dedupe_sources(sources: list[SourceConfig]) -> list[SourceConfig]:
     return deduped
 
 
+def _source_priority(source: SourceConfig) -> int:
+    try:
+        return int(source.metadata.get("priority") or 0)
+    except (TypeError, ValueError):
+        return 0
+
+
+def _is_blocked_source(source: SourceConfig) -> bool:
+    return bool(source.metadata.get("blocked"))
+
+
+def _apply_source_controls(sources: list[SourceConfig]) -> list[SourceConfig]:
+    available_sources = [source for source in sources if not _is_blocked_source(source)]
+    return sorted(available_sources, key=_source_priority, reverse=True)
+
+
 def _iso_to_datetime(value: str | None) -> datetime | None:
     if not value:
         return None
@@ -111,7 +127,7 @@ def resolve_sources(
     repository: JobRepository,
 ) -> list[SourceConfig]:
     if explicit_sources:
-        return explicit_sources
+        return _apply_source_controls(explicit_sources)
     fresh_sources = discover_sources(discovery_settings)
     for source in fresh_sources:
         repository.upsert_source(source)
@@ -129,7 +145,7 @@ def resolve_sources(
         limit=discovery_settings.max_low_value_rechecks_per_run,
     )
     combined_sources = _dedupe_sources([*fresh_sources, *active_sources, *candidate_sources, *low_value_sources])
-    return combined_sources[: discovery_settings.max_sources_per_run]
+    return _apply_source_controls(combined_sources)[: discovery_settings.max_sources_per_run]
 
 
 def collect_sources(

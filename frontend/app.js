@@ -219,6 +219,7 @@ function renderSourceQuality() {
     return;
   }
   state.sources.slice(0, 6).forEach((source) => {
+    const metadata = source.metadata || {};
     const item = document.createElement("div");
     item.className = "source-item";
 
@@ -233,7 +234,31 @@ function renderSourceQuality() {
     score.className = "source-score";
     score.textContent = source.quality_score;
 
-    item.append(left, score);
+    const controls = document.createElement("div");
+    controls.className = "source-controls";
+
+    const blockButton = document.createElement("button");
+    blockButton.className = "ghost";
+    blockButton.type = "button";
+    blockButton.textContent = metadata.blocked ? "Unblock" : "Block";
+    blockButton.addEventListener("click", () => {
+      updateSource(source.source_id, { blocked: !metadata.blocked }).catch((error) => {
+        elements.statusLine.textContent = error.message;
+      });
+    });
+
+    const priorityButton = document.createElement("button");
+    priorityButton.className = "ghost";
+    priorityButton.type = "button";
+    priorityButton.textContent = Number(metadata.priority || 0) > 0 ? "Normal" : "Boost";
+    priorityButton.addEventListener("click", () => {
+      updateSource(source.source_id, { priority: Number(metadata.priority || 0) > 0 ? 0 : 50 }).catch((error) => {
+        elements.statusLine.textContent = error.message;
+      });
+    });
+
+    controls.append(blockButton, priorityButton);
+    item.append(left, score, controls);
     elements.sourceQualityList.append(item);
   });
 }
@@ -340,6 +365,22 @@ async function updateJob(jobId, payload) {
     item.dismiss_reason = payload.dismiss_reason;
   }
   updateJobInState(jobId, item);
+}
+
+async function updateSource(sourceId, payload) {
+  const url = new URL(`/sources/${encodeURIComponent(sourceId)}`, state.apiBaseUrl);
+  const response = await fetch(url, {
+    method: "PATCH",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(payload),
+  });
+  if (!response.ok) {
+    throw new Error(`Source update failed with ${response.status}`);
+  }
+  const result = await response.json();
+  const item = result.item || {};
+  state.sources = state.sources.map((source) => (source.source_id === sourceId ? { ...source, ...item } : source));
+  renderSourceQuality();
 }
 
 async function loadJobDetail(jobId) {

@@ -12,11 +12,11 @@ from unittest.mock import patch
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 
-from job_finder.api import get_digest, get_freshness, get_job, list_jobs, list_sources, update_job
+from job_finder.api import get_digest, get_freshness, get_job, list_jobs, list_sources, update_job, update_source_control
 from job_finder.collector import build_job_record
 from job_finder.discovery import discover_sources, extract_source_from_url
 from job_finder.lambda_handlers import _emit_crawl_metrics, api_handler
-from job_finder.models import CrawlRunRecord, DiscoverySettings, SourceConfig
+from job_finder.models import CrawlRunRecord, DiscoverySettings, SourceConfig, stable_source_id
 from job_finder.normalize import classify_us_location
 from job_finder.scoring import build_feedback_profile
 from job_finder.storage import LocalJsonRepository, LocalPayloadStore
@@ -625,6 +625,26 @@ class LocalRepositoryTests(unittest.TestCase):
             self.assertGreater(payload["items"][0]["quality_score"], 0)
             self.assertEqual(payload["items"][0]["last_high_score_jobs"], 3)
 
+    def test_source_control_updates_are_exposed_by_api(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            repo = LocalJsonRepository(
+                jobs_path=str(Path(temp_dir) / "jobs.json"),
+                runs_path=str(Path(temp_dir) / "runs.json"),
+                sources_path=str(Path(temp_dir) / "sources.json"),
+            )
+            source = make_source(company="noisyco", source_type="greenhouse", identifier="noisyco")
+            repo.upsert_source(source)
+
+            payload = update_source_control(
+                repo,
+                stable_source_id(source.source_type, source.identifier),
+                {"blocked": True, "priority": 25, "note": "too noisy"},
+            )
+
+            self.assertTrue(payload["metadata"]["blocked"])
+            self.assertEqual(payload["metadata"]["priority"], 25)
+            self.assertEqual(payload["metadata"]["control_note"], "too noisy")
+
     def test_source_quality_prefers_strong_match_boards_over_large_noisy_boards(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
             repo = LocalJsonRepository(
@@ -884,6 +904,32 @@ class DiscoveryTests(unittest.TestCase):
                 )
             self.assertEqual(len(retry_sources), 1)
             self.assertEqual(retry_sources[0].identifier, "noisy")
+
+    def test_source_controls_block_and_prioritize_collection_sources(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            repo = LocalJsonRepository(
+                jobs_path=str(Path(temp_dir) / "jobs.json"),
+                runs_path=str(Path(temp_dir) / "runs.json"),
+                sources_path=str(Path(temp_dir) / "sources.json"),
+            )
+            normal = make_source(company="normal", source_type="lever", identifier="normal")
+            priority = make_source(company="priority", source_type="lever", identifier="priority")
+            blocked = make_source(company="blocked", source_type="lever", identifier="blocked")
+            for source in (normal, priority, blocked):
+                repo.upsert_source(source)
+            repo.update_source_control(stable_source_id(priority.source_type, priority.identifier), priority=50)
+            repo.update_source_control(stable_source_id(blocked.source_type, blocked.identifier), blocked=True)
+
+            with patch("job_finder.collector.discover_sources", return_value=[]):
+                from job_finder.collector import resolve_sources
+
+                sources = resolve_sources(
+                    [],
+                    DiscoverySettings(max_sources_per_run=10),
+                    repo,
+                )
+
+            self.assertEqual([source.identifier for source in sources], ["priority", "normal"])
 
 
 class NormalizeTests(unittest.TestCase):

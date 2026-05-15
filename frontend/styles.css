@@ -245,7 +245,7 @@ button:hover,
 
 .source-item {
   display: grid;
-  grid-template-columns: 1fr auto;
+  grid-template-columns: 1fr auto auto;
   gap: 12px;
   align-items: center;
   padding: 12px 14px;
@@ -272,6 +272,18 @@ button:hover,
   background: rgba(10, 125, 120, 0.12);
   color: var(--accent-2);
   font-weight: 700;
+}
+
+.source-controls {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  justify-content: flex-end;
+}
+
+.source-controls button {
+  padding: 8px 10px;
+  font-size: 0.82rem;
 }
 
 .freshness-grid {

@@ -34,12 +34,21 @@ def should_mark_source_low_value(record: SourceCatalogRecord) -> bool:
     return source_quality_score(record) < 10
 
 
+def _metadata_int(value: Any, default: int = 0) -> int:
+    try:
+        return int(value)
+    except (TypeError, ValueError):
+        return default
+
+
 def _sort_source_records(records: list[SourceCatalogRecord]) -> list[SourceCatalogRecord]:
     status_priority = {"manual": 0, "active": 1, "candidate": 2, "low_value": 3, "dead": 9}
     return sorted(
         records,
         key=lambda item: (
+            bool(item.metadata.get("blocked")),
             status_priority.get(item.status, 5),
+            -_metadata_int(item.metadata.get("priority")),
             -source_quality_score(item),
             item.last_checked_at or "",
             item.error_count,
@@ -161,6 +170,17 @@ class JobRepository(ABC):
         statuses: tuple[str, ...] = ("candidate", "active"),
         limit: int = 100,
     ) -> list[SourceCatalogRecord]:
+        raise NotImplementedError
+
+    @abstractmethod
+    def update_source_control(
+        self,
+        source_id: str,
+        *,
+        blocked: bool | None = None,
+        priority: int | None = None,
+        note: str | None = None,
+    ) -> SourceCatalogRecord | None:
         raise NotImplementedError
 
     @abstractmethod
@@ -377,6 +397,34 @@ class LocalJsonRepository(JobRepository):
                 continue
             filtered.append(record)
         return _sort_source_records(filtered)[:limit]
+
+    def update_source_control(
+        self,
+        source_id: str,
+        *,
+        blocked: bool | None = None,
+        priority: int | None = None,
+        note: str | None = None,
+    ) -> SourceCatalogRecord | None:
+        items = self._read_json(self.sources_path)
+        for index, item in enumerate(items):
+            if item["source_id"] != source_id:
+                continue
+            record = SourceCatalogRecord.from_item(item)
+            if blocked is not None:
+                record.metadata["blocked"] = blocked
+            if priority is not None:
+                record.metadata["priority"] = priority
+            if note is not None:
+                if note.strip():
+                    record.metadata["control_note"] = note.strip()[:300]
+                else:
+                    record.metadata.pop("control_note", None)
+            record.last_seen_at = utc_now_iso()
+            items[index] = record.to_item()
+            self._write_json(self.sources_path, items)
+            return record
+        return None
 
     def record_source_result(
         self,
@@ -804,6 +852,32 @@ class DynamoJobRepository(JobRepository):
                 continue
             filtered.append(record)
         return _sort_source_records(filtered)[:limit]
+
+    def update_source_control(
+        self,
+        source_id: str,
+        *,
+        blocked: bool | None = None,
+        priority: int | None = None,
+        note: str | None = None,
+    ) -> SourceCatalogRecord | None:
+        response = self.sources_table.get_item(Key={"source_id": source_id})
+        item = response.get("Item")
+        if not item:
+            return None
+        record = SourceCatalogRecord.from_item(item)
+        if blocked is not None:
+            record.metadata["blocked"] = blocked
+        if priority is not None:
+            record.metadata["priority"] = priority
+        if note is not None:
+            if note.strip():
+                record.metadata["control_note"] = note.strip()[:300]
+            else:
+                record.metadata.pop("control_note", None)
+        record.last_seen_at = utc_now_iso()
+        self.sources_table.put_item(Item=record.to_item())
+        return record
 
     def record_source_result(
         self,

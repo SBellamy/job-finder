@@ -395,6 +395,12 @@ resource "aws_apigatewayv2_route" "sources" {
   target    = "integrations/${aws_apigatewayv2_integration.api.id}"
 }
 
+resource "aws_apigatewayv2_route" "source_update" {
+  api_id    = aws_apigatewayv2_api.http.id
+  route_key = "PATCH /sources/{source_id}"
+  target    = "integrations/${aws_apigatewayv2_integration.api.id}"
+}
+
 resource "aws_apigatewayv2_route" "job_update" {
   api_id    = aws_apigatewayv2_api.http.id
   route_key = "PATCH /jobs/{job_id}"
