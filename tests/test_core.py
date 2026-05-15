@@ -4,16 +4,17 @@ import json
 import sys
 import tempfile
 import unittest
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from unittest.mock import patch
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 
-from job_finder.api import get_digest, list_jobs, list_sources, update_job
+from job_finder.api import get_digest, get_freshness, list_jobs, list_sources, update_job
 from job_finder.collector import build_job_record
 from job_finder.discovery import discover_sources, extract_source_from_url
 from job_finder.lambda_handlers import api_handler
-from job_finder.models import DiscoverySettings, SourceConfig
+from job_finder.models import CrawlRunRecord, DiscoverySettings, SourceConfig
 from job_finder.normalize import classify_us_location
 from job_finder.scoring import build_feedback_profile
 from job_finder.storage import LocalJsonRepository, LocalPayloadStore
@@ -350,6 +351,47 @@ class LocalRepositoryTests(unittest.TestCase):
             self.assertEqual(len(feedback_jobs), 1)
             self.assertEqual(feedback_jobs[0].company, "DismissedCo")
             self.assertEqual(feedback_jobs[0].status, "dismissed")
+
+    def test_freshness_reports_recent_completed_crawl(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            repo = LocalJsonRepository(
+                jobs_path=str(Path(temp_dir) / "jobs.json"),
+                runs_path=str(Path(temp_dir) / "runs.json"),
+            )
+            finished_at = (datetime.now(UTC) - timedelta(hours=2)).replace(microsecond=0).isoformat()
+            repo.record_crawl_run(
+                CrawlRunRecord(
+                    run_id="run-recent",
+                    started_at=(datetime.now(UTC) - timedelta(hours=3)).replace(microsecond=0).isoformat(),
+                    finished_at=finished_at,
+                    jobs_found=12,
+                    jobs_inserted=3,
+                    jobs_updated=9,
+                )
+            )
+
+            payload = get_freshness(repo, {"max_age_hours": "24"})
+            self.assertTrue(payload["ok"])
+            self.assertEqual(payload["latest_run"]["run_id"], "run-recent")
+            self.assertLess(payload["age_seconds"], 24 * 3600)
+
+    def test_freshness_reports_stale_completed_crawl(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            repo = LocalJsonRepository(
+                jobs_path=str(Path(temp_dir) / "jobs.json"),
+                runs_path=str(Path(temp_dir) / "runs.json"),
+            )
+            repo.record_crawl_run(
+                CrawlRunRecord(
+                    run_id="run-stale",
+                    started_at="2026-03-21T00:00:00+00:00",
+                    finished_at="2026-03-21T00:05:00+00:00",
+                )
+            )
+
+            payload = get_freshness(repo, {"max_age_hours": "24"})
+            self.assertFalse(payload["ok"])
+            self.assertEqual(payload["latest_run"]["run_id"], "run-stale")
 
     def test_api_filters_and_updates_jobs(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:

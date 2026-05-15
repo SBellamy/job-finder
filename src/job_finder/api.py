@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from collections import Counter
+from datetime import UTC, datetime
 from typing import Any
 
 from job_finder.models import utc_now_iso
@@ -10,6 +11,15 @@ from job_finder.storage import source_quality_score
 
 VALID_STATUSES = {"new", "saved", "dismissed", "applied"}
 VALID_JOB_SORTS = {"ranked", "newest"}
+
+
+def _parse_iso_datetime(value: str | None) -> datetime | None:
+    if not value:
+        return None
+    try:
+        return datetime.fromisoformat(value)
+    except ValueError:
+        return None
 
 
 def list_jobs(repository: JobRepository, query: dict[str, str | None]) -> dict[str, Any]:
@@ -29,6 +39,39 @@ def list_jobs(repository: JobRepository, query: dict[str, str | None]) -> dict[s
         limit=limit,
     )
     return {"items": [job.to_item() for job in jobs], "count": len(jobs)}
+
+
+def get_freshness(repository: JobRepository, query: dict[str, str | None]) -> dict[str, Any]:
+    max_age_hours = max(1, int(query.get("max_age_hours") or "24"))
+    latest_run = repository.latest_crawl_run()
+    if latest_run is None:
+        return {
+            "ok": False,
+            "max_age_hours": max_age_hours,
+            "latest_run": None,
+            "age_seconds": None,
+            "error": "No completed crawl runs found",
+        }
+
+    finished_at = _parse_iso_datetime(latest_run.finished_at)
+    if finished_at is None:
+        return {
+            "ok": False,
+            "max_age_hours": max_age_hours,
+            "latest_run": latest_run.to_item(),
+            "age_seconds": None,
+            "error": "Latest crawl run has an invalid finished_at timestamp",
+        }
+    if finished_at.tzinfo is None:
+        finished_at = finished_at.replace(tzinfo=UTC)
+
+    age_seconds = int((datetime.now(UTC) - finished_at).total_seconds())
+    return {
+        "ok": age_seconds <= max_age_hours * 3600,
+        "max_age_hours": max_age_hours,
+        "latest_run": latest_run.to_item(),
+        "age_seconds": age_seconds,
+    }
 
 
 def update_job(repository: JobRepository, job_id: str, payload: dict[str, Any]) -> dict[str, Any]:

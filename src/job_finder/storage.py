@@ -120,6 +120,10 @@ class JobRepository(ABC):
         raise NotImplementedError
 
     @abstractmethod
+    def latest_crawl_run(self) -> CrawlRunRecord | None:
+        raise NotImplementedError
+
+    @abstractmethod
     def upsert_source(self, source: SourceConfig) -> str:
         raise NotImplementedError
 
@@ -260,6 +264,16 @@ class LocalJsonRepository(JobRepository):
         runs = self._read_json(self.runs_path)
         runs.append(run.to_item())
         self._write_json(self.runs_path, runs)
+
+    def latest_crawl_run(self) -> CrawlRunRecord | None:
+        records = [
+            CrawlRunRecord.from_item(item)
+            for item in self._read_json(self.runs_path)
+            if item.get("finished_at")
+        ]
+        if not records:
+            return None
+        return sorted(records, key=lambda item: item.finished_at or item.started_at, reverse=True)[0]
 
     def upsert_source(self, source: SourceConfig) -> str:
         items = self._read_json(self.sources_path)
@@ -614,6 +628,21 @@ class DynamoJobRepository(JobRepository):
 
     def record_crawl_run(self, run: CrawlRunRecord) -> None:
         self.crawl_runs_table.put_item(Item=run.to_item())
+
+    def latest_crawl_run(self) -> CrawlRunRecord | None:
+        response = self.crawl_runs_table.scan()
+        items = response.get("Items", [])
+        while "LastEvaluatedKey" in response:
+            response = self.crawl_runs_table.scan(ExclusiveStartKey=response["LastEvaluatedKey"])
+            items.extend(response.get("Items", []))
+        records = [
+            CrawlRunRecord.from_item(item)
+            for item in items
+            if item.get("finished_at")
+        ]
+        if not records:
+            return None
+        return sorted(records, key=lambda item: item.finished_at or item.started_at, reverse=True)[0]
 
     def upsert_source(self, source: SourceConfig) -> str:
         source_id = stable_source_id(source.source_type, source.identifier)

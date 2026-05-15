@@ -309,6 +309,12 @@ resource "aws_apigatewayv2_route" "health" {
   target    = "integrations/${aws_apigatewayv2_integration.api.id}"
 }
 
+resource "aws_apigatewayv2_route" "health_freshness" {
+  api_id    = aws_apigatewayv2_api.http.id
+  route_key = "GET /health/freshness"
+  target    = "integrations/${aws_apigatewayv2_integration.api.id}"
+}
+
 resource "aws_apigatewayv2_route" "jobs" {
   api_id    = aws_apigatewayv2_api.http.id
   route_key = "GET /jobs"

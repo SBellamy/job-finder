@@ -117,6 +117,14 @@ class CrawlRunRecord:
     def to_item(self) -> dict[str, Any]:
         return asdict(self)
 
+    @classmethod
+    def from_item(cls, item: dict[str, Any]) -> "CrawlRunRecord":
+        payload = dict(item)
+        for key in ("pages_checked", "jobs_found", "jobs_inserted", "jobs_updated", "errors_count"):
+            payload[key] = int(payload.get(key, 0) or 0)
+        payload["errors"] = list(payload.get("errors") or [])
+        return cls(**payload)
+
 
 @dataclass(slots=True)
 class SourceCatalogRecord:

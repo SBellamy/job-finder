@@ -5,7 +5,7 @@ import logging
 from decimal import Decimal
 from typing import Any
 
-from job_finder.api import get_digest, list_jobs, list_sources, update_job
+from job_finder.api import get_digest, get_freshness, list_jobs, list_sources, update_job
 from job_finder.collector import collect_sources
 from job_finder.config import load_allowed_origin, load_discovery_settings, load_sources_from_event, load_storage_settings
 from job_finder.storage import DynamoJobRepository, S3PayloadStore
@@ -76,6 +76,9 @@ def api_handler(event: dict[str, Any], _context: Any) -> dict[str, Any]:
 
     try:
         repository = _repository()
+        if method == "GET" and path == "/health/freshness":
+            query = event.get("queryStringParameters") or {}
+            return _response(200, get_freshness(repository, query))
         if method == "GET" and path == "/jobs":
             query = event.get("queryStringParameters") or {}
             return _response(200, list_jobs(repository, query))
