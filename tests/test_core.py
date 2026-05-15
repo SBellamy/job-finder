@@ -404,6 +404,44 @@ class LocalRepositoryTests(unittest.TestCase):
             payload = list_jobs(repo, {"eligible_only": "true", "limit": "10", "sort": "newest"})
             self.assertEqual(payload["items"][0]["job_id"], newer_lower_score.job_id)
 
+    def test_api_can_sort_by_newest_posted_with_provider_timestamps(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            repo = LocalJsonRepository(
+                jobs_path=str(Path(temp_dir) / "jobs.json"),
+                runs_path=str(Path(temp_dir) / "runs.json"),
+            )
+            older_posted = build_job_record(
+                make_source(),
+                {
+                    "source_job_id": "posted-older",
+                    "title": "Senior DevOps Engineer",
+                    "location_text": "Remote, United States",
+                    "description_text": "AWS Terraform Ansible observability CI/CD Linux packaging",
+                    "apply_url": "https://example.com/jobs/posted-older",
+                    "posted_date": "2026-03-21T09:00:00+00:00",
+                },
+                raw_payload_key=None,
+            )
+            newer_posted = build_job_record(
+                make_source(company="PostedCo"),
+                {
+                    "source_job_id": "posted-newer",
+                    "title": "Platform Engineer",
+                    "location_text": "Remote, United States",
+                    "description_text": "AWS Terraform automation",
+                    "apply_url": "https://example.com/jobs/posted-newer",
+                    "posted_date": str(int(datetime(2026, 3, 22, tzinfo=UTC).timestamp() * 1000)),
+                },
+                raw_payload_key=None,
+            )
+            older_posted.first_seen_at = "2026-03-23T09:00:00+00:00"
+            newer_posted.first_seen_at = "2026-03-22T09:00:00+00:00"
+            repo.upsert_job(older_posted)
+            repo.upsert_job(newer_posted)
+
+            payload = list_jobs(repo, {"eligible_only": "true", "limit": "10", "sort": "newest_posted"})
+            self.assertEqual(payload["items"][0]["job_id"], newer_posted.job_id)
+
     def test_newest_sort_uses_last_seen_as_tie_breaker(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
             repo = LocalJsonRepository(
@@ -1179,6 +1217,34 @@ class DiscoveryTests(unittest.TestCase):
                 )
 
             self.assertEqual([source.identifier for source in sources], ["priority", "normal"])
+
+    def test_seeded_manual_sources_are_selected_and_preserved(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            repo = LocalJsonRepository(
+                jobs_path=str(Path(temp_dir) / "jobs.json"),
+                runs_path=str(Path(temp_dir) / "runs.json"),
+                sources_path=str(Path(temp_dir) / "sources.json"),
+            )
+            manual = make_source(company="manual", source_type="lever", identifier="manual", metadata={"status": "manual", "priority": 90})
+            active = make_source(company="active", source_type="lever", identifier="active")
+            repo.upsert_source(active)
+            repo.upsert_source(manual)
+            repo.record_source_result(active, was_success=True, jobs_found=1, eligible_jobs=1, high_score_jobs=1, total_score=100, top_score=100)
+            repo.record_source_result(manual, was_success=True, jobs_found=1, eligible_jobs=1, high_score_jobs=1, total_score=100, top_score=100)
+
+            with patch("job_finder.collector.discover_sources", return_value=[]):
+                from job_finder.collector import resolve_sources
+
+                sources = resolve_sources(
+                    [],
+                    DiscoverySettings(max_sources_per_run=10),
+                    repo,
+                )
+
+            records = repo.list_source_records(statuses=("manual", "active"), limit=10)
+            manual_record = next(record for record in records if record.identifier == "manual")
+            self.assertEqual(manual_record.status, "manual")
+            self.assertEqual([source.identifier for source in sources], ["manual", "active"])
 
 
 class NormalizeTests(unittest.TestCase):

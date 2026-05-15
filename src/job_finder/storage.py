@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import time
 from abc import ABC, abstractmethod
+from datetime import datetime
 from pathlib import Path
 from typing import Any
 
@@ -39,6 +40,15 @@ def _metadata_int(value: Any, default: int = 0) -> int:
         return int(value)
     except (TypeError, ValueError):
         return default
+
+
+def _source_initial_status(source: SourceConfig) -> str:
+    requested = str(source.metadata.get("status") or source.metadata.get("source_status") or "").strip().lower()
+    if requested in {"manual", "active", "candidate", "low_value", "dead"}:
+        return requested
+    if source.metadata.get("seeded") or source.metadata.get("manual"):
+        return "manual"
+    return "candidate"
 
 
 def _sort_source_records(records: list[SourceCatalogRecord]) -> list[SourceCatalogRecord]:
@@ -83,14 +93,34 @@ def _job_matches_filters(
     return True
 
 
-def _sort_jobs(records: list[JobRecord], *, sort_by: str = "ranked") -> list[JobRecord]:
+def _sort_timestamp(value: str | None) -> float:
+    if not value:
+        return 0.0
+    text = str(value).strip()
+    if not text:
+        return 0.0
+    if text.isdigit():
+        numeric = float(text)
+        return numeric / 1000 if numeric > 10_000_000_000 else numeric
+    try:
+        return datetime.fromisoformat(text.replace("Z", "+00:00")).timestamp()
+    except ValueError:
+        return 0.0
+
+
+def _job_sort_key(record: JobRecord, *, sort_by: str) -> tuple[Any, ...]:
+    first_seen = _sort_timestamp(record.first_seen_at)
+    last_seen = _sort_timestamp(record.last_seen_at)
+    posted = _sort_timestamp(record.posted_date)
     if sort_by == "newest":
-        return sorted(
-            records,
-            key=lambda item: (item.first_seen_at, item.last_seen_at, item.posted_date or "", item.score, item.is_eligible),
-            reverse=True,
-        )
-    return sorted(records, key=lambda item: (item.is_eligible, item.score, item.first_seen_at, item.posted_date or ""), reverse=True)
+        return (first_seen, last_seen, posted, record.score, record.is_eligible)
+    if sort_by == "newest_posted":
+        return (posted or first_seen, first_seen, last_seen, record.score, record.is_eligible)
+    return (record.is_eligible, record.score, first_seen, posted)
+
+
+def _sort_jobs(records: list[JobRecord], *, sort_by: str = "ranked") -> list[JobRecord]:
+    return sorted(records, key=lambda item: _job_sort_key(item, sort_by=sort_by), reverse=True)
 
 
 class JobRepository(ABC):
@@ -367,10 +397,14 @@ class LocalJsonRepository(JobRepository):
                 existing.status = "candidate"
                 existing.error_count = 0
                 existing.last_error_at = None
+            if _source_initial_status(source) == "manual" and existing.status in {"candidate", "low_value", "dead"}:
+                existing.status = "manual"
+                existing.error_count = 0
+                existing.last_error_at = None
             items[index] = existing.to_item()
             self._write_json(self.sources_path, items)
             return "updated"
-        items.append(SourceCatalogRecord.from_source(source, now=now).to_item())
+        items.append(SourceCatalogRecord.from_source(source, now=now, status=_source_initial_status(source)).to_item())
         self._write_json(self.sources_path, items)
         return "inserted"
 
@@ -452,7 +486,8 @@ class LocalJsonRepository(JobRepository):
             record.last_seen_at = now
             record.last_checked_at = now
             if was_success:
-                record.status = "active"
+                if record.status != "manual":
+                    record.status = "active"
                 record.last_success_at = now
                 record.error_count = 0
                 record.success_count += 1
@@ -464,7 +499,7 @@ class LocalJsonRepository(JobRepository):
                 record.last_jobs_found = jobs_found
                 record.last_eligible_jobs = eligible_jobs
                 record.last_high_score_jobs = high_score_jobs
-                if should_mark_source_low_value(record):
+                if record.status != "manual" and should_mark_source_low_value(record):
                     record.status = "low_value"
                 record.metadata.pop("last_error_message", None)
             else:
@@ -617,11 +652,7 @@ class DynamoJobRepository(JobRepository):
                     only_new=only_new,
                 ):
                     continue
-                if sort_by == "newest":
-                    sort_key = (record.first_seen_at, record.last_seen_at, record.posted_date or "", record.score, record.is_eligible)
-                else:
-                    sort_key = (record.is_eligible, record.score, record.first_seen_at, record.posted_date or "")
-                matches.append((sort_key, record.job_id, record))
+                matches.append((_job_sort_key(record, sort_by=sort_by), record.job_id, record))
             if "LastEvaluatedKey" not in response:
                 break
             scan_kwargs["ExclusiveStartKey"] = response["LastEvaluatedKey"]
@@ -811,9 +842,13 @@ class DynamoJobRepository(JobRepository):
                 record.status = "candidate"
                 record.error_count = 0
                 record.last_error_at = None
+            if _source_initial_status(source) == "manual" and record.status in {"candidate", "low_value", "dead"}:
+                record.status = "manual"
+                record.error_count = 0
+                record.last_error_at = None
             operation = "updated"
         else:
-            record = SourceCatalogRecord.from_source(source, now=now)
+            record = SourceCatalogRecord.from_source(source, now=now, status=_source_initial_status(source))
             operation = "inserted"
         self.sources_table.put_item(Item=record.to_item())
         return operation
@@ -885,12 +920,17 @@ class DynamoJobRepository(JobRepository):
     ) -> None:
         source_id = stable_source_id(source.source_type, source.identifier)
         response = self.sources_table.get_item(Key={"source_id": source_id})
-        record = SourceCatalogRecord.from_item(response["Item"]) if "Item" in response else SourceCatalogRecord.from_source(source)
+        record = (
+            SourceCatalogRecord.from_item(response["Item"])
+            if "Item" in response
+            else SourceCatalogRecord.from_source(source, status=_source_initial_status(source))
+        )
         now = utc_now_iso()
         record.last_seen_at = now
         record.last_checked_at = now
         if was_success:
-            record.status = "active"
+            if record.status != "manual":
+                record.status = "active"
             record.last_success_at = now
             record.error_count = 0
             record.success_count += 1
@@ -902,7 +942,7 @@ class DynamoJobRepository(JobRepository):
             record.last_jobs_found = jobs_found
             record.last_eligible_jobs = eligible_jobs
             record.last_high_score_jobs = high_score_jobs
-            if should_mark_source_low_value(record):
+            if record.status != "manual" and should_mark_source_low_value(record):
                 record.status = "low_value"
             record.metadata.pop("last_error_message", None)
         else:

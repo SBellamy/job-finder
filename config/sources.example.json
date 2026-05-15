@@ -30,5 +30,17 @@
     "company_size": "mid",
     "company_tags": ["saas"],
     "careers_url": "https://apply.workable.com/example"
+  },
+  {
+    "company": "Example SmartRecruiters Company",
+    "source_type": "smartrecruiters",
+    "identifier": "ExampleCompany",
+    "company_size": "mid",
+    "company_tags": ["saas"],
+    "careers_url": "https://jobs.smartrecruiters.com/ExampleCompany",
+    "metadata": {
+      "max_pages": 2,
+      "max_detail_fetches": 40
+    }
   }
 ]

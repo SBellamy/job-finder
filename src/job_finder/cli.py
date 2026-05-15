@@ -16,6 +16,24 @@ def _load_sources(path: str) -> list[SourceConfig]:
     return [SourceConfig.from_dict(item) for item in payload]
 
 
+def _seed_sources(repository: LocalJsonRepository, path: str, *, priority: int) -> dict[str, int]:
+    inserted = 0
+    updated = 0
+    for source in _load_sources(path):
+        source.metadata = {
+            **source.metadata,
+            "seeded": True,
+            "status": "manual",
+            "priority": int(source.metadata.get("priority") or priority),
+        }
+        result = repository.upsert_source(source)
+        if result == "inserted":
+            inserted += 1
+        else:
+            updated += 1
+    return {"inserted": inserted, "updated": updated}
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description="Job finder local workflow")
     subparsers = parser.add_subparsers(dest="command", required=True)
@@ -59,6 +77,12 @@ def main() -> int:
     sources_parser.add_argument("--limit", type=int, default=50)
     sources_parser.add_argument("--statuses", default="active,candidate")
 
+    seed_parser = subparsers.add_parser("seed-sources", help="Seed known-good ATS boards into the local source catalog")
+    seed_parser.add_argument("--sources", required=True, help="Source JSON file to import")
+    seed_parser.add_argument("--jobs", default="data/jobs.json")
+    seed_parser.add_argument("--source-catalog", default=None, help="Optional local source catalog file")
+    seed_parser.add_argument("--priority", type=int, default=75, help="Default priority for seeded sources")
+
     args = parser.parse_args()
     if args.command == "collect":
         keywords = json.loads(args.discovery_keywords) if args.discovery_keywords else []
@@ -95,6 +119,10 @@ def main() -> int:
     if args.command == "sources":
         repository = LocalJsonRepository(jobs_path=args.jobs, sources_path=args.sources_path)
         print(json.dumps(list_sources(repository, {"limit": str(args.limit), "statuses": args.statuses}), indent=2))
+        return 0
+    if args.command == "seed-sources":
+        repository = LocalJsonRepository(jobs_path=args.jobs, sources_path=args.source_catalog)
+        print(json.dumps(_seed_sources(repository, args.sources, priority=args.priority), indent=2))
         return 0
 
     repository = LocalJsonRepository(jobs_path=args.jobs)

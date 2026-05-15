@@ -15,7 +15,7 @@ from job_finder.storage import source_quality_score
 
 
 VALID_STATUSES = {"new", "saved", "dismissed", "applied"}
-VALID_JOB_SORTS = {"ranked", "newest"}
+VALID_JOB_SORTS = {"ranked", "newest", "newest_posted"}
 DEFAULT_JOBS_LIMIT = 50
 MAX_JOBS_LIMIT = 1000
 MAX_EXPORT_LIMIT = 1000

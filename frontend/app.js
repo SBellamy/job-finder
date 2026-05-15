@@ -144,6 +144,18 @@ function sortJobs(jobs) {
     });
     return sorted;
   }
+  if (selectedSort === "newest_posted") {
+    sorted.sort((left, right) => {
+      const leftPosted = parseSortDate(left.posted_date) || parseSortDate(left.first_seen_at);
+      const rightPosted = parseSortDate(right.posted_date) || parseSortDate(right.first_seen_at);
+      return (
+        rightPosted - leftPosted ||
+        parseSortDate(right.first_seen_at) - parseSortDate(left.first_seen_at) ||
+        right.score - left.score
+      );
+    });
+    return sorted;
+  }
   sorted.sort((left, right) => {
     const rankedDelta =
       Number(right.is_eligible) - Number(left.is_eligible) ||
@@ -362,7 +374,7 @@ async function fetchInsights() {
 
   const sourcesUrl = new URL("/sources", state.apiBaseUrl);
   sourcesUrl.searchParams.set("limit", "8");
-  sourcesUrl.searchParams.set("statuses", "active,candidate,low_value");
+  sourcesUrl.searchParams.set("statuses", "manual,active,candidate,low_value");
 
   const freshnessUrl = new URL("/health/freshness", state.apiBaseUrl);
   freshnessUrl.searchParams.set("max_age_hours", "24");

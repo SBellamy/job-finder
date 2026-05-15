@@ -6,7 +6,7 @@ It pulls jobs from public ATS boards, normalizes and scores them, stores the res
 
 ## What It Covers
 
-- ATS providers: `ashby`, `greenhouse`, `lever`, `workable`
+- ATS providers: `ashby`, `greenhouse`, `lever`, `smartrecruiters`, `workable`
 - Discovery-first collection from public ATS boards
 - A persistent source catalog so discovered boards build up over time
 - Scoring for AWS, Terraform, CI/CD, automation, observability, Linux, and related platform work
@@ -84,6 +84,16 @@ If you want to force specific ATS boards, manual overrides still work:
 PYTHONPATH=src python3 -m job_finder collect --sources config/sources.example.json
 ```
 
+To seed known-good boards into the local source catalog so discovery does not have to find them again:
+
+```bash
+PYTHONPATH=src python3 -m job_finder seed-sources \
+  --sources config/sources.example.json \
+  --priority 75
+```
+
+Seeded sources are treated as manual, prioritized during collection, and preserved in the catalog across later runs.
+
 ## Dashboard
 
 The frontend is plain static HTML, CSS, and JavaScript.
@@ -91,6 +101,8 @@ The frontend is plain static HTML, CSS, and JavaScript.
 - `frontend/index.html` renders the review UI
 - `frontend/app.js` calls the API
 - Terraform uploads the static assets and a generated `config.json` to S3
+
+The dashboard supports best-match, newest-found, and newest-posted sorting. Newest posted uses provider dates when available and falls back to first-seen time.
 
 For a local preview, create `frontend/config.json` with an `apiBaseUrl` and serve `frontend/` with any static file server.
 

@@ -28,6 +28,28 @@ The next iterations should bias more heavily toward coverage and review speed:
 - Frontend modernization moves into the active sprint. The dashboard should feel like a daily review cockpit: fast to scan, clearer about freshness/source quality, and less visually cluttered.
 - Read-model work remains important, but projected reads and pagination have reduced the immediate pain enough to focus on better results and review ergonomics first.
 
+## Progress Update: 2026-05-15
+
+Completed and deployed:
+
+- Freshness endpoint, crawl freshness alarm, collector metrics, and Terraform drift checks.
+- Collector concurrency guard and structured JSON collector logs.
+- Dismiss reasons, source block/boost controls, compact list responses, detail endpoint, cursor pagination, and CSV/JSON export.
+- Dashboard freshness panel, source quality controls, larger page loading, and a cleaner visual refresh.
+- SmartRecruiters provider coverage with paged list collection and detail enrichment.
+- Discovery fallback so known catalog sources still collect when search discovery has a transient failure.
+
+In progress:
+
+- Better posted-date handling, including a newest-posted dashboard sort.
+- Source seeding for known-good boards so coverage does not depend entirely on search.
+
+Next highest-value work:
+
+- Backfill or seed a small known-good source set and watch source quality after the next scheduled crawls.
+- Add a query-friendly dashboard read model once the table grows enough for projected scans to become a real bottleneck.
+- Add a daily digest delivery path after result quality stabilizes.
+
 ## Planning Assumptions
 
 - Sprint length: 1 week.
@@ -200,7 +222,7 @@ Acceptance criteria:
 
 ### 1.4 Better Posted-Date Handling
 
-Priority: P2
+Priority: P1
 
 Problem: "newest found" is useful, but users also care about newly posted jobs. ATS providers expose posted dates inconsistently.
 
@@ -408,7 +430,7 @@ Acceptance criteria:
 
 ### 4.3 Source Seeding Workflow
 
-Priority: P2
+Priority: P1
 
 Problem: discovery is search-dependent, and search results are inherently inconsistent.
 

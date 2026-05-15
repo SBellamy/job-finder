@@ -144,7 +144,7 @@ def resolve_sources(
     for source in fresh_sources:
         repository.upsert_source(source)
     active_sources = repository.list_sources(
-        statuses=("active",),
+        statuses=("manual", "active"),
         limit=max(discovery_settings.max_sources_per_run * 2, discovery_settings.max_sources_per_ats),
     )
     candidate_sources = repository.list_sources(
