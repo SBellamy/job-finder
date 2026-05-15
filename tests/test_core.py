@@ -12,7 +12,7 @@ from unittest.mock import patch
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 
-from job_finder.api import get_digest, get_freshness, get_job, list_jobs, list_sources, update_job, update_source_control
+from job_finder.api import export_jobs, get_digest, get_freshness, get_job, list_jobs, list_sources, update_job, update_source_control
 from job_finder.collector import build_job_record
 from job_finder.discovery import discover_sources, extract_source_from_url
 from job_finder.lambda_handlers import _emit_crawl_metrics, api_handler
@@ -613,6 +613,38 @@ class LocalRepositoryTests(unittest.TestCase):
             detail = get_job(repo, job.job_id)
             self.assertEqual(detail["description_text"], job.description_text)
             self.assertEqual(detail["metadata"]["large"], "metadata")
+
+    def test_jobs_export_supports_csv_and_json(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            repo = LocalJsonRepository(
+                jobs_path=str(Path(temp_dir) / "jobs.json"),
+                runs_path=str(Path(temp_dir) / "runs.json"),
+            )
+            job = build_job_record(
+                make_source(company="ExportCo"),
+                {
+                    "source_job_id": "230",
+                    "title": "Senior DevOps Engineer",
+                    "location_text": "Remote, United States",
+                    "description_text": "AWS Terraform observability automation",
+                    "apply_url": "https://example.com/jobs/230",
+                },
+                raw_payload_key=None,
+            )
+            repo.upsert_job(job)
+            updated = repo.update_job(job.job_id, status="applied", notes="Follow up next week")
+            assert updated is not None
+
+            csv_export = export_jobs(repo, {"format": "csv", "status": "applied"})
+            self.assertEqual(csv_export["content_type"], "text/csv; charset=utf-8")
+            self.assertIn("ExportCo", csv_export["body"])
+            self.assertIn("Follow up next week", csv_export["body"])
+            self.assertIn("applied_at", csv_export["body"].splitlines()[0])
+
+            json_export = export_jobs(repo, {"format": "json", "status": "applied"})
+            parsed = json.loads(json_export["body"])
+            self.assertEqual(parsed["count"], 1)
+            self.assertEqual(parsed["items"][0]["company"], "ExportCo")
 
     def test_digest_returns_top_new_jobs(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:

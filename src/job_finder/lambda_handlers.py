@@ -8,7 +8,7 @@ from decimal import Decimal
 from typing import Any
 from urllib.parse import unquote
 
-from job_finder.api import get_digest, get_freshness, get_job, list_jobs, list_sources, update_job, update_source_control
+from job_finder.api import export_jobs, get_digest, get_freshness, get_job, list_jobs, list_sources, update_job, update_source_control
 from job_finder.collector import collect_sources
 from job_finder.config import load_allowed_origin, load_discovery_settings, load_sources_from_event, load_storage_settings
 from job_finder.models import CrawlRunRecord
@@ -108,6 +108,20 @@ def _response(status_code: int, payload: dict[str, Any]) -> dict[str, Any]:
     }
 
 
+def _raw_response(status_code: int, body: str, *, content_type: str, filename: str | None = None) -> dict[str, Any]:
+    origin = load_allowed_origin()
+    headers = {
+        "Content-Type": content_type,
+        "Access-Control-Allow-Origin": origin,
+        "Access-Control-Allow-Headers": "content-type",
+        "Access-Control-Allow-Methods": "GET,PATCH,OPTIONS",
+        "Access-Control-Expose-Headers": "content-disposition",
+    }
+    if filename:
+        headers["Content-Disposition"] = f'attachment; filename="{filename}"'
+    return {"statusCode": status_code, "headers": headers, "body": body}
+
+
 def collector_handler(event: dict[str, Any], _context: Any) -> dict[str, Any]:
     repository, payload_store = _repository_and_payload_store()
     sources = load_sources_from_event(event)
@@ -133,6 +147,10 @@ def api_handler(event: dict[str, Any], _context: Any) -> dict[str, Any]:
         if method == "GET" and path == "/jobs":
             query = event.get("queryStringParameters") or {}
             return _response(200, list_jobs(repository, query))
+        if method == "GET" and path == "/jobs/export":
+            query = event.get("queryStringParameters") or {}
+            export = export_jobs(repository, query)
+            return _raw_response(200, export["body"], content_type=export["content_type"], filename=export["filename"])
         if method == "GET" and path.startswith("/jobs/"):
             job_id = unquote(path.rsplit("/", 1)[-1])
             return _response(200, {"item": get_job(repository, job_id)})

@@ -1,7 +1,9 @@
 from __future__ import annotations
 
 import base64
+import csv
 import hashlib
+import io
 import json
 from collections import Counter
 from datetime import UTC, datetime
@@ -16,6 +18,7 @@ VALID_STATUSES = {"new", "saved", "dismissed", "applied"}
 VALID_JOB_SORTS = {"ranked", "newest"}
 DEFAULT_JOBS_LIMIT = 50
 MAX_JOBS_LIMIT = 100
+MAX_EXPORT_LIMIT = 1000
 VALID_DISMISS_REASONS = {
     "already_seen",
     "low_priority",
@@ -113,6 +116,83 @@ def get_job(repository: JobRepository, job_id: str) -> dict[str, Any]:
     if record is None:
         raise KeyError(job_id)
     return record.to_item()
+
+
+def _job_export_row(job: Any) -> dict[str, Any]:
+    item = job.to_item()
+    metadata = dict(item.get("metadata") or {})
+    return {
+        "company": item.get("company", ""),
+        "title": item.get("title", ""),
+        "status": item.get("status", ""),
+        "applied_at": metadata.get("applied_at", ""),
+        "score": item.get("score", ""),
+        "location": item.get("location_text", ""),
+        "source_type": item.get("source_type", ""),
+        "posted_date": item.get("posted_date", ""),
+        "first_seen_at": item.get("first_seen_at", ""),
+        "last_seen_at": item.get("last_seen_at", ""),
+        "apply_url": item.get("apply_url", ""),
+        "notes": item.get("notes", ""),
+        "dismiss_reason": metadata.get("dismiss_reason", ""),
+        "score_reasons": "; ".join(item.get("score_reasons") or []),
+    }
+
+
+def export_jobs(repository: JobRepository, query: dict[str, str | None]) -> dict[str, str]:
+    export_format = (query.get("format") or "csv").strip().lower()
+    if export_format not in {"csv", "json"}:
+        raise ValueError(f"Invalid export format: {export_format}")
+
+    min_score = query.get("min_score")
+    sort_by = (query.get("sort") or "ranked").strip().lower()
+    if sort_by not in VALID_JOB_SORTS:
+        raise ValueError(f"Invalid sort: {sort_by}")
+    jobs = repository.list_jobs(
+        status=query.get("status") or None,
+        source_type=query.get("source_type") or None,
+        company=query.get("company") or None,
+        min_score=int(min_score) if min_score else None,
+        eligible_only=(query.get("eligible_only", "false").lower() != "false"),
+        only_new=(query.get("only_new", "false").lower() == "true"),
+        sort_by=sort_by,
+        limit=min(int(query.get("limit") or str(MAX_EXPORT_LIMIT)), MAX_EXPORT_LIMIT),
+    )
+    rows = [_job_export_row(job) for job in jobs]
+    filename = f"job-finder-{datetime.now(UTC).strftime('%Y%m%dT%H%M%SZ')}.{export_format}"
+
+    if export_format == "json":
+        return {
+            "body": json.dumps({"generated_at": utc_now_iso(), "count": len(rows), "items": rows}),
+            "content_type": "application/json",
+            "filename": filename,
+        }
+
+    buffer = io.StringIO()
+    fieldnames = list(rows[0].keys()) if rows else list(_job_export_row_placeholder().keys())
+    writer = csv.DictWriter(buffer, fieldnames=fieldnames)
+    writer.writeheader()
+    writer.writerows(rows)
+    return {"body": buffer.getvalue(), "content_type": "text/csv; charset=utf-8", "filename": filename}
+
+
+def _job_export_row_placeholder() -> dict[str, str]:
+    return {
+        "company": "",
+        "title": "",
+        "status": "",
+        "applied_at": "",
+        "score": "",
+        "location": "",
+        "source_type": "",
+        "posted_date": "",
+        "first_seen_at": "",
+        "last_seen_at": "",
+        "apply_url": "",
+        "notes": "",
+        "dismiss_reason": "",
+        "score_reasons": "",
+    }
 
 
 def get_freshness(repository: JobRepository, query: dict[str, str | None]) -> dict[str, Any]:

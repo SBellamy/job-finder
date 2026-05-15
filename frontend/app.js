@@ -19,6 +19,7 @@ const elements = {
   sortFilter: document.querySelector("#sortFilter"),
   onlyNewToggle: document.querySelector("#onlyNewToggle"),
   refreshButton: document.querySelector("#refreshButton"),
+  exportButton: document.querySelector("#exportButton"),
   loadMoreButton: document.querySelector("#loadMoreButton"),
   statusLine: document.querySelector("#statusLine"),
   apiLine: document.querySelector("#apiLine"),
@@ -67,6 +68,27 @@ function buildJobsUrl(cursor = null) {
   if (cursor) {
     url.searchParams.set("cursor", cursor);
   }
+  return url;
+}
+
+function buildExportUrl() {
+  const url = new URL("/jobs/export", state.apiBaseUrl);
+  const status = elements.statusFilter.value.trim();
+  const minScore = elements.scoreFilter.value.trim();
+  const sort = elements.sortFilter.value.trim();
+  if (status) {
+    url.searchParams.set("status", status);
+  }
+  if (minScore) {
+    url.searchParams.set("min_score", minScore);
+  }
+  if (sort) {
+    url.searchParams.set("sort", sort);
+  }
+  url.searchParams.set("eligible_only", "true");
+  url.searchParams.set("only_new", elements.onlyNewToggle.checked ? "true" : "false");
+  url.searchParams.set("format", "csv");
+  url.searchParams.set("limit", "1000");
   return url;
 }
 
@@ -400,6 +422,30 @@ async function updateSource(sourceId, payload) {
   renderSourceQuality();
 }
 
+async function exportJobs() {
+  elements.exportButton.disabled = true;
+  elements.exportButton.textContent = "Exporting...";
+  try {
+    const response = await fetch(buildExportUrl(), { cache: "no-store" });
+    if (!response.ok) {
+      throw new Error(`Export failed with ${response.status}`);
+    }
+    const blob = await response.blob();
+    const objectUrl = URL.createObjectURL(blob);
+    const link = document.createElement("a");
+    const timestamp = new Date().toISOString().replace(/[:.]/g, "").slice(0, 15);
+    link.href = objectUrl;
+    link.download = `job-finder-${timestamp}.csv`;
+    document.body.append(link);
+    link.click();
+    link.remove();
+    URL.revokeObjectURL(objectUrl);
+  } finally {
+    elements.exportButton.disabled = false;
+    elements.exportButton.textContent = "Export CSV";
+  }
+}
+
 async function loadJobDetail(jobId) {
   const existing = state.jobs.find((job) => job.job_id === jobId);
   if (existing?.description_text) {
@@ -548,6 +594,14 @@ async function init() {
   elements.refreshButton.addEventListener("click", () => {
     refreshData().catch((error) => {
       elements.statusLine.textContent = error.message;
+    });
+  });
+
+  elements.exportButton.addEventListener("click", () => {
+    exportJobs().catch((error) => {
+      elements.statusLine.textContent = error.message;
+      elements.exportButton.disabled = false;
+      elements.exportButton.textContent = "Export CSV";
     });
   });
 

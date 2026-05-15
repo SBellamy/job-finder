@@ -383,6 +383,12 @@ resource "aws_apigatewayv2_route" "job_detail" {
   target    = "integrations/${aws_apigatewayv2_integration.api.id}"
 }
 
+resource "aws_apigatewayv2_route" "jobs_export" {
+  api_id    = aws_apigatewayv2_api.http.id
+  route_key = "GET /jobs/export"
+  target    = "integrations/${aws_apigatewayv2_integration.api.id}"
+}
+
 resource "aws_apigatewayv2_route" "digest" {
   api_id    = aws_apigatewayv2_api.http.id
   route_key = "GET /digest"
