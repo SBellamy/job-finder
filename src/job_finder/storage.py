@@ -73,7 +73,13 @@ def _job_matches_filters(
     return True
 
 
-def _sort_jobs(records: list[JobRecord]) -> list[JobRecord]:
+def _sort_jobs(records: list[JobRecord], *, sort_by: str = "ranked") -> list[JobRecord]:
+    if sort_by == "newest":
+        return sorted(
+            records,
+            key=lambda item: (item.first_seen_at, item.last_seen_at, item.score, item.is_eligible),
+            reverse=True,
+        )
     return sorted(records, key=lambda item: (item.is_eligible, item.score, item.first_seen_at), reverse=True)
 
 
@@ -96,8 +102,13 @@ class JobRepository(ABC):
         min_score: int | None = None,
         eligible_only: bool = True,
         only_new: bool = False,
+        sort_by: str = "ranked",
         limit: int = 100,
     ) -> list[JobRecord]:
+        raise NotImplementedError
+
+    @abstractmethod
+    def list_feedback_jobs(self, *, limit: int = 1000) -> list[JobRecord]:
         raise NotImplementedError
 
     @abstractmethod
@@ -202,6 +213,7 @@ class LocalJsonRepository(JobRepository):
         min_score: int | None = None,
         eligible_only: bool = True,
         only_new: bool = False,
+        sort_by: str = "ranked",
         limit: int = 100,
     ) -> list[JobRecord]:
         records = [JobRecord.from_item(item) for item in self._read_json(self.jobs_path)]
@@ -218,7 +230,16 @@ class LocalJsonRepository(JobRepository):
                 only_new=only_new,
             )
         ]
-        return _sort_jobs(filtered)[:limit]
+        return _sort_jobs(filtered, sort_by=sort_by)[:limit]
+
+    def list_feedback_jobs(self, *, limit: int = 1000) -> list[JobRecord]:
+        feedback_statuses = {"saved", "applied", "dismissed"}
+        records = [
+            record
+            for record in (JobRecord.from_item(item) for item in self._read_json(self.jobs_path))
+            if record.status in feedback_statuses
+        ]
+        return _sort_jobs(records, sort_by="newest")[:limit]
 
     def update_job(self, job_id: str, *, status: str | None = None, notes: str | None = None) -> JobRecord | None:
         items = self._read_json(self.jobs_path)
@@ -402,6 +423,7 @@ class DynamoJobRepository(JobRepository):
         min_score: int | None = None,
         eligible_only: bool = True,
         only_new: bool = False,
+        sort_by: str = "ranked",
         limit: int = 100,
     ) -> list[JobRecord]:
         from boto3.dynamodb.conditions import Attr
@@ -431,7 +453,7 @@ class DynamoJobRepository(JobRepository):
         if filter_expression is not None:
             scan_kwargs["FilterExpression"] = filter_expression
 
-        matches: list[tuple[tuple[bool, int, str], str]] = []
+        matches: list[tuple[tuple[Any, ...], str]] = []
         while True:
             response = self.jobs_table.scan(**scan_kwargs)
             for item in response.get("Items", []):
@@ -467,7 +489,11 @@ class DynamoJobRepository(JobRepository):
                     only_new=only_new,
                 ):
                     continue
-                matches.append(((record.is_eligible, record.score, record.first_seen_at), record.job_id))
+                if sort_by == "newest":
+                    sort_key = (record.first_seen_at, record.score, record.is_eligible)
+                else:
+                    sort_key = (record.is_eligible, record.score, record.first_seen_at)
+                matches.append((sort_key, record.job_id))
             if "LastEvaluatedKey" not in response:
                 break
             scan_kwargs["ExclusiveStartKey"] = response["LastEvaluatedKey"]
@@ -475,6 +501,49 @@ class DynamoJobRepository(JobRepository):
         top_job_ids = [job_id for _sort_key, job_id in sorted(matches, reverse=True)[:limit]]
         records = [self.get_job(job_id) for job_id in top_job_ids]
         return [record for record in records if record is not None]
+
+    def list_feedback_jobs(self, *, limit: int = 1000) -> list[JobRecord]:
+        from boto3.dynamodb.conditions import Attr
+
+        scan_kwargs: dict[str, Any] = {
+            "ProjectionExpression": "#status, title, company, first_seen_at, last_seen_at",
+            "ExpressionAttributeNames": {
+                "#status": "status",
+            },
+            "FilterExpression": Attr("status").eq("saved") | Attr("status").eq("applied") | Attr("status").eq("dismissed"),
+        }
+        records: list[JobRecord] = []
+        while True:
+            response = self.jobs_table.scan(**scan_kwargs)
+            for item in response.get("Items", []):
+                records.append(
+                    JobRecord(
+                        job_id="feedback-only",
+                        source_job_id=None,
+                        canonical_url="",
+                        apply_url="",
+                        source_type="",
+                        source_name="",
+                        company=str(item.get("company") or ""),
+                        title=str(item.get("title") or ""),
+                        location_text="",
+                        remote_type="unknown",
+                        posted_date=None,
+                        first_seen_at=str(item.get("first_seen_at") or ""),
+                        last_seen_at=str(item.get("last_seen_at") or ""),
+                        description_text="",
+                        score=0,
+                        score_reasons=[],
+                        is_eligible=False,
+                        is_remote=False,
+                        is_us_based=False,
+                        status=str(item.get("status") or "new"),
+                    )
+                )
+            if "LastEvaluatedKey" not in response:
+                break
+            scan_kwargs["ExclusiveStartKey"] = response["LastEvaluatedKey"]
+        return _sort_jobs(records, sort_by="newest")[:limit]
 
     def get_job(self, job_id: str) -> JobRecord | None:
         response = self.jobs_table.get_item(Key={"job_id": job_id})
@@ -502,6 +571,7 @@ class DynamoJobRepository(JobRepository):
         min_score: int | None = None,
         eligible_only: bool = True,
         only_new: bool = False,
+        sort_by: str = "ranked",
         limit: int = 100,
     ) -> list[JobRecord]:
         if limit <= 250:
@@ -512,6 +582,7 @@ class DynamoJobRepository(JobRepository):
                 min_score=min_score,
                 eligible_only=eligible_only,
                 only_new=only_new,
+                sort_by=sort_by,
                 limit=limit,
             )
         records = [JobRecord.from_item(item) for item in self._scan_table(self.jobs_table)]
@@ -528,7 +599,7 @@ class DynamoJobRepository(JobRepository):
                 only_new=only_new,
             )
         ]
-        return _sort_jobs(filtered)[:limit]
+        return _sort_jobs(filtered, sort_by=sort_by)[:limit]
 
     def update_job(self, job_id: str, *, status: str | None = None, notes: str | None = None) -> JobRecord | None:
         record = self.get_job(job_id)

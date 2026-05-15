@@ -19,16 +19,19 @@ locals {
   }
   dashboard_assets = {
     "index.html" = {
-      path         = "${path.module}/../../frontend/index.html"
-      content_type = "text/html; charset=utf-8"
+      path          = "${path.module}/../../frontend/index.html"
+      content_type  = "text/html; charset=utf-8"
+      cache_control = "no-cache, no-store, must-revalidate"
     }
     "styles.css" = {
-      path         = "${path.module}/../../frontend/styles.css"
-      content_type = "text/css; charset=utf-8"
+      path          = "${path.module}/../../frontend/styles.css"
+      content_type  = "text/css; charset=utf-8"
+      cache_control = "no-cache, no-store, must-revalidate"
     }
     "app.js" = {
-      path         = "${path.module}/../../frontend/app.js"
-      content_type = "application/javascript; charset=utf-8"
+      path          = "${path.module}/../../frontend/app.js"
+      content_type  = "application/javascript; charset=utf-8"
+      cache_control = "no-cache, no-store, must-revalidate"
     }
   }
   schedule_map = {
@@ -242,8 +245,8 @@ resource "aws_lambda_function" "collector" {
   handler          = "job_finder.lambda_handlers.collector_handler"
   filename         = data.archive_file.lambda.output_path
   source_code_hash = data.archive_file.lambda.output_base64sha256
-  timeout          = 180
-  memory_size      = 512
+  timeout          = 300
+  memory_size      = 1024
   architectures    = ["arm64"]
 
   environment {
@@ -527,16 +530,18 @@ resource "aws_s3_bucket_policy" "dashboard" {
 resource "aws_s3_object" "dashboard_assets" {
   for_each = local.dashboard_assets
 
-  bucket       = aws_s3_bucket.dashboard.id
-  key          = each.key
-  source       = each.value.path
-  content_type = each.value.content_type
-  etag         = filemd5(each.value.path)
+  bucket        = aws_s3_bucket.dashboard.id
+  key           = each.key
+  source        = each.value.path
+  content_type  = each.value.content_type
+  cache_control = each.value.cache_control
+  etag          = filemd5(each.value.path)
 }
 
 resource "aws_s3_object" "dashboard_config" {
-  bucket       = aws_s3_bucket.dashboard.id
-  key          = "config.json"
-  content      = jsonencode({ apiBaseUrl = aws_apigatewayv2_api.http.api_endpoint })
-  content_type = "application/json"
+  bucket        = aws_s3_bucket.dashboard.id
+  key           = "config.json"
+  content       = jsonencode({ apiBaseUrl = aws_apigatewayv2_api.http.api_endpoint })
+  content_type  = "application/json"
+  cache_control = "no-cache, no-store, must-revalidate"
 }

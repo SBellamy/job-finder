@@ -14,6 +14,7 @@ const elements = {
   statusFilter: document.querySelector("#statusFilter"),
   sourceFilter: document.querySelector("#sourceFilter"),
   scoreFilter: document.querySelector("#scoreFilter"),
+  sortFilter: document.querySelector("#sortFilter"),
   onlyNewToggle: document.querySelector("#onlyNewToggle"),
   refreshButton: document.querySelector("#refreshButton"),
   statusLine: document.querySelector("#statusLine"),
@@ -42,11 +43,15 @@ function buildJobsUrl() {
   const url = new URL("/jobs", state.apiBaseUrl);
   const status = elements.statusFilter.value.trim();
   const minScore = elements.scoreFilter.value.trim();
+  const sort = elements.sortFilter.value.trim();
   if (status) {
     url.searchParams.set("status", status);
   }
   if (minScore) {
     url.searchParams.set("min_score", minScore);
+  }
+  if (sort) {
+    url.searchParams.set("sort", sort);
   }
   url.searchParams.set("eligible_only", "true");
   url.searchParams.set("only_new", elements.onlyNewToggle.checked ? "true" : "false");
@@ -76,11 +81,48 @@ function updateSourceFilter() {
   elements.sourceFilter.value = sources.includes(currentValue) ? currentValue : "";
 }
 
+function parseSortDate(value) {
+  if (!value) {
+    return 0;
+  }
+  if (/^\d+$/.test(String(value))) {
+    return Number(value);
+  }
+  const parsed = Date.parse(value);
+  return Number.isNaN(parsed) ? 0 : parsed;
+}
+
+function sortJobs(jobs) {
+  const selectedSort = elements.sortFilter.value;
+  const sorted = [...jobs];
+  if (selectedSort === "newest") {
+    sorted.sort((left, right) => {
+      const newestDelta = parseSortDate(right.first_seen_at) - parseSortDate(left.first_seen_at);
+      if (newestDelta !== 0) {
+        return newestDelta;
+      }
+      return right.score - left.score;
+    });
+    return sorted;
+  }
+  sorted.sort((left, right) => {
+    const rankedDelta =
+      Number(right.is_eligible) - Number(left.is_eligible) ||
+      right.score - left.score ||
+      parseSortDate(right.first_seen_at) - parseSortDate(left.first_seen_at);
+    if (rankedDelta !== 0) {
+      return rankedDelta;
+    }
+    return parseSortDate(right.posted_date) - parseSortDate(left.posted_date);
+  });
+  return sorted;
+}
+
 function applyClientFilters() {
   const search = elements.searchInput.value.trim().toLowerCase();
   const source = elements.sourceFilter.value.trim();
 
-  state.filteredJobs = state.jobs.filter((job) => {
+  const filteredJobs = state.jobs.filter((job) => {
     if (source && job.source_type !== source) {
       return false;
     }
@@ -90,6 +132,7 @@ function applyClientFilters() {
     const haystack = [job.company, job.title, job.description_text, ...(job.score_reasons || [])].join(" ").toLowerCase();
     return haystack.includes(search);
   });
+  state.filteredJobs = sortJobs(filteredJobs);
   renderJobs();
 }
 
@@ -294,10 +337,11 @@ async function init() {
     elements.statusFilter,
     elements.sourceFilter,
     elements.scoreFilter,
+    elements.sortFilter,
     elements.onlyNewToggle,
   ].forEach((element) => {
     element.addEventListener("input", () => {
-      if (element === elements.searchInput || element === elements.sourceFilter) {
+      if (element === elements.searchInput || element === elements.sourceFilter || element === elements.sortFilter) {
         applyClientFilters();
         return;
       }
@@ -306,7 +350,7 @@ async function init() {
       });
     });
     element.addEventListener("change", () => {
-      if (element === elements.searchInput || element === elements.sourceFilter) {
+      if (element === elements.searchInput || element === elements.sourceFilter || element === elements.sortFilter) {
         applyClientFilters();
       }
     });

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import logging
 from datetime import UTC, datetime
 from uuid import uuid4
 
@@ -9,6 +10,10 @@ from job_finder.models import CrawlRunRecord, DiscoverySettings, JobRecord, Sour
 from job_finder.normalize import canonicalize_url, classify_us_location, description_fingerprint, detect_remote_type, is_us_location, strip_html
 from job_finder.scoring import FeedbackProfile, build_feedback_profile, score_job
 from job_finder.storage import JobRepository, RawPayloadStore
+
+
+logger = logging.getLogger(__name__)
+logger.setLevel(logging.INFO)
 
 
 def build_job_record(
@@ -136,14 +141,19 @@ def collect_sources(
 ) -> CrawlRunRecord:
     settings = discovery_settings or DiscoverySettings()
     active_sources = resolve_sources(sources, settings, repository)
-    feedback_profile = build_feedback_profile(
-        repository.list_jobs(limit=5000, eligible_only=False, only_new=False)
-    )
+    feedback_jobs = repository.list_feedback_jobs(limit=1000)
+    feedback_profile = build_feedback_profile(feedback_jobs)
     started_at = utc_now_iso()
     run = CrawlRunRecord(
         run_id=f"run-{datetime.now(UTC).strftime('%Y%m%dT%H%M%S')}-{uuid4().hex[:8]}",
         started_at=started_at,
         source="discovery" if not sources else "manual",
+    )
+    logger.info(
+        "Starting collection run %s with %s sources and %s feedback jobs",
+        run.run_id,
+        len(active_sources),
+        len(feedback_jobs),
     )
     if not active_sources:
         run.errors_count += 1
@@ -177,6 +187,18 @@ def collect_sources(
                     run.jobs_inserted += 1
                 else:
                     run.jobs_updated += 1
+            logger.info(
+                "Run %s processed %s (%s:%s): found=%s inserted=%s updated=%s eligible=%s high_score=%s",
+                run.run_id,
+                source.company,
+                source.source_type,
+                source.identifier,
+                len(built_jobs),
+                run.jobs_inserted,
+                run.jobs_updated,
+                eligible_jobs,
+                high_score_jobs,
+            )
         except Exception as exc:  # pragma: no cover - kept broad to protect scheduled runs
             run.errors_count += 1
             error_message = f"{source.company} ({source.source_type}:{source.identifier}): {exc}"
@@ -187,6 +209,16 @@ def collect_sources(
                 disable_after_errors=settings.source_error_threshold,
             )
             run.errors.append(error_message)
+            logger.exception("Run %s failed for %s (%s:%s)", run.run_id, source.company, source.source_type, source.identifier)
     run.finished_at = utc_now_iso()
     repository.record_crawl_run(run)
+    logger.info(
+        "Completed run %s: pages_checked=%s jobs_found=%s inserted=%s updated=%s errors=%s",
+        run.run_id,
+        run.pages_checked,
+        run.jobs_found,
+        run.jobs_inserted,
+        run.jobs_updated,
+        run.errors_count,
+    )
     return run

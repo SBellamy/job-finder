@@ -9,11 +9,15 @@ from job_finder.storage import source_quality_score
 
 
 VALID_STATUSES = {"new", "saved", "dismissed", "applied"}
+VALID_JOB_SORTS = {"ranked", "newest"}
 
 
 def list_jobs(repository: JobRepository, query: dict[str, str | None]) -> dict[str, Any]:
     limit = min(int(query.get("limit") or "100"), 250)
     min_score = query.get("min_score")
+    sort_by = (query.get("sort") or "ranked").strip().lower()
+    if sort_by not in VALID_JOB_SORTS:
+        raise ValueError(f"Invalid sort: {sort_by}")
     jobs = repository.list_jobs(
         status=query.get("status") or None,
         source_type=query.get("source_type") or None,
@@ -21,6 +25,7 @@ def list_jobs(repository: JobRepository, query: dict[str, str | None]) -> dict[s
         min_score=int(min_score) if min_score else None,
         eligible_only=(query.get("eligible_only", "true").lower() != "false"),
         only_new=(query.get("only_new", "false").lower() == "true"),
+        sort_by=sort_by,
         limit=limit,
     )
     return {"items": [job.to_item() for job in jobs], "count": len(jobs)}

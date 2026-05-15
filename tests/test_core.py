@@ -275,6 +275,82 @@ class LocalRepositoryTests(unittest.TestCase):
             listed = repo.list_jobs(limit=10, eligible_only=False, only_new=False)
             self.assertEqual(listed[0].job_id, higher_score.job_id)
 
+    def test_api_can_sort_by_newest_found(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            repo = LocalJsonRepository(
+                jobs_path=str(Path(temp_dir) / "jobs.json"),
+                runs_path=str(Path(temp_dir) / "runs.json"),
+            )
+            older_high_score = build_job_record(
+                make_source(),
+                {
+                    "source_job_id": "160",
+                    "title": "Senior DevOps Engineer",
+                    "location_text": "Remote, United States",
+                    "description_text": "AWS Terraform Ansible observability CI/CD Linux packaging",
+                    "apply_url": "https://example.com/jobs/160",
+                },
+                raw_payload_key=None,
+            )
+            newer_lower_score = build_job_record(
+                make_source(company="NewerCo"),
+                {
+                    "source_job_id": "161",
+                    "title": "Platform Engineer",
+                    "location_text": "Remote, United States",
+                    "description_text": "AWS Terraform automation",
+                    "apply_url": "https://example.com/jobs/161",
+                },
+                raw_payload_key=None,
+            )
+            older_high_score.first_seen_at = "2026-03-21T09:00:00+00:00"
+            newer_lower_score.first_seen_at = "2026-03-21T10:00:00+00:00"
+            repo.upsert_job(older_high_score)
+            repo.upsert_job(newer_lower_score)
+
+            payload = list_jobs(repo, {"eligible_only": "true", "limit": "10", "sort": "newest"})
+            self.assertEqual(payload["items"][0]["job_id"], newer_lower_score.job_id)
+
+    def test_feedback_jobs_only_include_labeled_history(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            repo = LocalJsonRepository(
+                jobs_path=str(Path(temp_dir) / "jobs.json"),
+                runs_path=str(Path(temp_dir) / "runs.json"),
+            )
+            dismissed_job = build_job_record(
+                make_source(company="DismissedCo"),
+                {
+                    "source_job_id": "170",
+                    "title": "Platform Engineer",
+                    "location_text": "Remote, United States",
+                    "description_text": "AWS Terraform automation",
+                    "apply_url": "https://example.com/jobs/170",
+                },
+                raw_payload_key=None,
+            )
+            dismissed_job.status = "dismissed"
+            dismissed_job.first_seen_at = "2026-03-21T11:00:00+00:00"
+            new_job = build_job_record(
+                make_source(company="FreshCo"),
+                {
+                    "source_job_id": "171",
+                    "title": "Senior DevOps Engineer",
+                    "location_text": "Remote, United States",
+                    "description_text": "AWS Terraform observability CI/CD",
+                    "apply_url": "https://example.com/jobs/171",
+                },
+                raw_payload_key=None,
+            )
+            new_job.status = "new"
+            new_job.first_seen_at = "2026-03-21T12:00:00+00:00"
+            repo.upsert_job(dismissed_job)
+            repo.upsert_job(new_job)
+
+            feedback_jobs = repo.list_feedback_jobs(limit=10)
+            self.assertEqual(len(feedback_jobs), 1)
+            self.assertEqual(feedback_jobs[0].company, "DismissedCo")
+            self.assertEqual(feedback_jobs[0].status, "dismissed")
+
     def test_api_filters_and_updates_jobs(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
             jobs_path = Path(temp_dir) / "jobs.json"
