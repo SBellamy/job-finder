@@ -12,7 +12,7 @@ from unittest.mock import patch
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 
-from job_finder.api import get_digest, get_freshness, list_jobs, list_sources, update_job
+from job_finder.api import get_digest, get_freshness, get_job, list_jobs, list_sources, update_job
 from job_finder.collector import build_job_record
 from job_finder.discovery import discover_sources, extract_source_from_url
 from job_finder.lambda_handlers import _emit_crawl_metrics, api_handler
@@ -123,6 +123,23 @@ class BuildJobRecordTests(unittest.TestCase):
 
         self.assertLess(job.score, 10)
         self.assertIn("off-target title family", job.score_reasons)
+
+    def test_penalizes_customer_operations_titles_with_incidental_keywords(self) -> None:
+        job = build_job_record(
+            make_source(),
+            {
+                "source_job_id": "785",
+                "title": "Head of Customer Operations",
+                "location_text": "Remote, United States",
+                "description_text": "Own partner support operations, contractual support obligations, AWS workflows, and automation tooling.",
+                "apply_url": "https://example.com/jobs/785",
+            },
+            raw_payload_key=None,
+        )
+
+        self.assertLess(job.score, 20)
+        self.assertIn("off-target title family", job.score_reasons)
+        self.assertNotIn("contract role", job.score_reasons)
 
     def test_penalizes_sdet_roles_even_with_cloud_keywords(self) -> None:
         job = build_job_record(
@@ -435,6 +452,39 @@ class LocalRepositoryTests(unittest.TestCase):
 
             stored = json.loads(jobs_path.read_text(encoding="utf-8"))
             self.assertEqual(stored[0]["status"], "applied")
+
+    def test_jobs_list_uses_summary_shape_and_detail_keeps_full_description(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            repo = LocalJsonRepository(
+                jobs_path=str(Path(temp_dir) / "jobs.json"),
+                runs_path=str(Path(temp_dir) / "runs.json"),
+            )
+            job = build_job_record(
+                make_source(),
+                {
+                    "source_job_id": "220",
+                    "title": "Senior DevOps Engineer",
+                    "location_text": "Remote, United States",
+                    "description_text": "AWS Terraform observability automation " * 30,
+                    "apply_url": "https://example.com/jobs/220",
+                },
+                raw_payload_key="raw/run/test.json",
+            )
+            job.metadata["large"] = "metadata"
+            repo.upsert_job(job)
+
+            listed = list_jobs(repo, {"limit": "10"})
+            summary = listed["items"][0]
+            self.assertNotIn("description_text", summary)
+            self.assertNotIn("metadata", summary)
+            self.assertNotIn("raw_payload_s3_key", summary)
+            self.assertIn("description_excerpt", summary)
+            self.assertTrue(summary["has_description"])
+            self.assertLess(len(summary["description_excerpt"]), len(job.description_text))
+
+            detail = get_job(repo, job.job_id)
+            self.assertEqual(detail["description_text"], job.description_text)
+            self.assertEqual(detail["metadata"]["large"], "metadata")
 
     def test_digest_returns_top_new_jobs(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:

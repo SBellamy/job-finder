@@ -4,7 +4,7 @@ from collections import Counter
 from datetime import UTC, datetime
 from typing import Any
 
-from job_finder.models import utc_now_iso
+from job_finder.models import text_excerpt, utc_now_iso
 from job_finder.storage import JobRepository
 from job_finder.storage import source_quality_score
 
@@ -20,6 +20,16 @@ def _parse_iso_datetime(value: str | None) -> datetime | None:
         return datetime.fromisoformat(value)
     except ValueError:
         return None
+
+
+def _job_summary(job: Any) -> dict[str, Any]:
+    item = job.to_item()
+    description = str(item.pop("description_text", "") or "")
+    item.pop("metadata", None)
+    item.pop("raw_payload_s3_key", None)
+    item["description_excerpt"] = text_excerpt(description)
+    item["has_description"] = bool(description.strip())
+    return item
 
 
 def list_jobs(repository: JobRepository, query: dict[str, str | None]) -> dict[str, Any]:
@@ -38,7 +48,14 @@ def list_jobs(repository: JobRepository, query: dict[str, str | None]) -> dict[s
         sort_by=sort_by,
         limit=limit,
     )
-    return {"items": [job.to_item() for job in jobs], "count": len(jobs)}
+    return {"items": [_job_summary(job) for job in jobs], "count": len(jobs)}
+
+
+def get_job(repository: JobRepository, job_id: str) -> dict[str, Any]:
+    record = repository.get_job(job_id)
+    if record is None:
+        raise KeyError(job_id)
+    return record.to_item()
 
 
 def get_freshness(repository: JobRepository, query: dict[str, str | None]) -> dict[str, Any]:
@@ -101,7 +118,7 @@ def get_digest(repository: JobRepository, query: dict[str, str | None]) -> dict[
     return {
         "generated_at": utc_now_iso(),
         "count": len(jobs),
-        "items": [job.to_item() for job in jobs],
+        "items": [_job_summary(job) for job in jobs],
         "summary": {
             "top_companies": company_counts.most_common(10),
             "top_sources": source_counts.most_common(10),

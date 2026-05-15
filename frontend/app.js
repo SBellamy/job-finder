@@ -135,7 +135,13 @@ function applyClientFilters() {
     if (!search) {
       return true;
     }
-    const haystack = [job.company, job.title, job.description_text, ...(job.score_reasons || [])].join(" ").toLowerCase();
+    const haystack = [
+      job.company,
+      job.title,
+      job.description_text,
+      job.description_excerpt,
+      ...(job.score_reasons || []),
+    ].join(" ").toLowerCase();
     return haystack.includes(search);
   });
   state.filteredJobs = sortJobs(filteredJobs);
@@ -320,6 +326,23 @@ async function updateJob(jobId, payload) {
   updateJobInState(jobId, item);
 }
 
+async function loadJobDetail(jobId) {
+  const existing = state.jobs.find((job) => job.job_id === jobId);
+  if (existing?.description_text) {
+    return existing;
+  }
+  const url = new URL(`/jobs/${jobId}`, state.apiBaseUrl);
+  const response = await fetch(url, { cache: "no-store" });
+  if (!response.ok) {
+    throw new Error(`Detail failed with ${response.status}`);
+  }
+  const payload = await response.json();
+  const item = payload.item || {};
+  state.jobs = state.jobs.map((job) => (job.job_id === jobId ? { ...job, ...item } : job));
+  state.filteredJobs = state.filteredJobs.map((job) => (job.job_id === jobId ? { ...job, ...item } : job));
+  return state.jobs.find((job) => job.job_id === jobId) || item;
+}
+
 function truncate(text, length = 260) {
   const normalized = (text || "").trim();
   if (normalized.length <= length) {
@@ -352,7 +375,9 @@ function renderJobs() {
     cardFragment.querySelector(".company").textContent = job.company;
     cardFragment.querySelector("h2").textContent = job.title;
     cardFragment.querySelector(".score-pill").textContent = job.score;
-    cardFragment.querySelector(".description").textContent = truncate(job.description_text, 280);
+    const summaryDescription = job.description_excerpt || job.description_text || "";
+    const description = cardFragment.querySelector(".description");
+    description.textContent = truncate(summaryDescription, 280);
 
     const meta = cardFragment.querySelector(".meta");
     [
@@ -376,6 +401,29 @@ function renderJobs() {
     cardFragment.querySelector(".save").addEventListener("click", () => updateJob(job.job_id, { status: "saved", notes: notes.value }));
     cardFragment.querySelector(".dismiss").addEventListener("click", () => updateJob(job.job_id, { status: "dismissed", notes: notes.value }));
     cardFragment.querySelector(".applied").addEventListener("click", () => updateJob(job.job_id, { status: "applied", notes: notes.value }));
+
+    const detailsButton = cardFragment.querySelector(".details");
+    detailsButton.addEventListener("click", async () => {
+      if (article.dataset.expanded === "true") {
+        article.dataset.expanded = "false";
+        description.textContent = truncate(summaryDescription, 280);
+        detailsButton.textContent = "Details";
+        return;
+      }
+      detailsButton.disabled = true;
+      detailsButton.textContent = "Loading...";
+      try {
+        const detail = await loadJobDetail(job.job_id);
+        article.dataset.expanded = "true";
+        description.textContent = truncate(detail.description_text || summaryDescription, 1600);
+        detailsButton.textContent = "Hide details";
+      } catch (error) {
+        detailsButton.textContent = "Details unavailable";
+        elements.statusLine.textContent = error.message;
+      } finally {
+        detailsButton.disabled = false;
+      }
+    });
 
     fragment.append(cardFragment);
   }

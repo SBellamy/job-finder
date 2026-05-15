@@ -64,6 +64,7 @@ TITLE_WEIGHTS = {
 OFF_TARGET_TITLE_WEIGHTS = {
     "salesforce": -55,
     "customer success": -50,
+    "customer operations": -55,
     "customer support": -45,
     "customer service": -45,
     "account executive": -45,
@@ -112,6 +113,8 @@ OFF_TARGET_TITLE_WEIGHTS = {
     "design systems": -20,
     "corporate engineering": -16,
 }
+
+CONTRACT_ROLE_RE = re.compile(r"\b(contract|contractor|contract-to-hire|c2h|1099)\b")
 
 GENERIC_ENGINEERING_TITLE_HINTS = {
     "software engineer",
@@ -394,7 +397,7 @@ def score_job(job: JobRecord, source: SourceConfig, feedback_profile: FeedbackPr
         if "smaller SaaS target" not in reasons:
             reasons.append("smaller SaaS target")
 
-    if "contract" in text:
+    if CONTRACT_ROLE_RE.search(text):
         score -= 15
         reasons.append("contract role")
     if "security clearance" in text:

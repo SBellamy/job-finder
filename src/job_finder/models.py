@@ -10,6 +10,13 @@ def utc_now_iso() -> str:
     return datetime.now(UTC).replace(microsecond=0).isoformat()
 
 
+def text_excerpt(value: str, *, length: int = 360) -> str:
+    normalized = " ".join((value or "").split())
+    if len(normalized) <= length:
+        return normalized
+    return f"{normalized[: length - 3]}..."
+
+
 def stable_job_id(source_type: str, source_job_id: str | None, canonical_url: str) -> str:
     base = "::".join(
         [
@@ -223,10 +230,12 @@ class JobRecord:
     def to_item(self) -> dict[str, Any]:
         item = asdict(self)
         item["is_new"] = self.is_new
+        item["description_excerpt"] = text_excerpt(self.description_text)
         return item
 
     @classmethod
     def from_item(cls, item: dict[str, Any]) -> "JobRecord":
         payload = dict(item)
         payload.pop("is_new", None)
+        payload.pop("description_excerpt", None)
         return cls(**payload)

@@ -473,7 +473,12 @@ class DynamoJobRepository(JobRepository):
         from boto3.dynamodb.conditions import Attr
 
         scan_kwargs: dict[str, Any] = {
-            "ProjectionExpression": "#job_id, #status, source_type, company, score, is_eligible, first_seen_at",
+            "ProjectionExpression": (
+                "#job_id, source_job_id, canonical_url, apply_url, source_type, source_name, "
+                "company, title, location_text, remote_type, posted_date, first_seen_at, "
+                "last_seen_at, score, score_reasons, is_eligible, is_remote, is_us_based, "
+                "us_location_confidence, #status, notes, hash_fingerprint, description_excerpt"
+            ),
             "ExpressionAttributeNames": {
                 "#job_id": "job_id",
                 "#status": "status",
@@ -497,31 +502,34 @@ class DynamoJobRepository(JobRepository):
         if filter_expression is not None:
             scan_kwargs["FilterExpression"] = filter_expression
 
-        matches: list[tuple[tuple[Any, ...], str]] = []
+        matches: list[tuple[tuple[Any, ...], str, JobRecord]] = []
         while True:
             response = self.jobs_table.scan(**scan_kwargs)
             for item in response.get("Items", []):
                 record = JobRecord(
                     job_id=item["job_id"],
-                    source_job_id=None,
-                    canonical_url="",
-                    apply_url="",
+                    source_job_id=item.get("source_job_id"),
+                    canonical_url=str(item.get("canonical_url") or ""),
+                    apply_url=str(item.get("apply_url") or ""),
                     source_type=str(item.get("source_type") or ""),
-                    source_name="",
+                    source_name=str(item.get("source_name") or ""),
                     company=str(item.get("company") or ""),
-                    title="",
-                    location_text="",
-                    remote_type="unknown",
-                    posted_date=None,
+                    title=str(item.get("title") or ""),
+                    location_text=str(item.get("location_text") or ""),
+                    remote_type=str(item.get("remote_type") or "unknown"),
+                    posted_date=item.get("posted_date"),
                     first_seen_at=str(item.get("first_seen_at") or ""),
-                    last_seen_at="",
-                    description_text="",
+                    last_seen_at=str(item.get("last_seen_at") or ""),
+                    description_text=str(item.get("description_excerpt") or ""),
                     score=int(item.get("score") or 0),
-                    score_reasons=[],
+                    score_reasons=list(item.get("score_reasons") or []),
                     is_eligible=bool(item.get("is_eligible")),
-                    is_remote=False,
-                    is_us_based=False,
+                    is_remote=bool(item.get("is_remote")),
+                    is_us_based=bool(item.get("is_us_based")),
+                    us_location_confidence=str(item.get("us_location_confidence") or "unknown"),
                     status=str(item.get("status") or "new"),
+                    notes=str(item.get("notes") or ""),
+                    hash_fingerprint=str(item.get("hash_fingerprint") or ""),
                 )
                 if not _job_matches_filters(
                     record,
@@ -537,14 +545,12 @@ class DynamoJobRepository(JobRepository):
                     sort_key = (record.first_seen_at, record.score, record.is_eligible)
                 else:
                     sort_key = (record.is_eligible, record.score, record.first_seen_at)
-                matches.append((sort_key, record.job_id))
+                matches.append((sort_key, record.job_id, record))
             if "LastEvaluatedKey" not in response:
                 break
             scan_kwargs["ExclusiveStartKey"] = response["LastEvaluatedKey"]
 
-        top_job_ids = [job_id for _sort_key, job_id in sorted(matches, reverse=True)[:limit]]
-        records = [self.get_job(job_id) for job_id in top_job_ids]
-        return [record for record in records if record is not None]
+        return [record for _sort_key, _job_id, record in sorted(matches, reverse=True)[:limit]]
 
     def list_feedback_jobs(self, *, limit: int = 1000) -> list[JobRecord]:
         from boto3.dynamodb.conditions import Attr
