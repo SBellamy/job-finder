@@ -309,7 +309,7 @@ def create_source(repository: JobRepository, payload: dict[str, Any]) -> dict[st
     records = repository.list_source_records(
         enabled_only=False,
         statuses=("manual", "active", "candidate", "low_value", "dead"),
-        limit=500,
+        limit=5000,
     )
     for record in records:
         if record.source_id == source_id:
