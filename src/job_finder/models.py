@@ -113,6 +113,7 @@ class CrawlRunRecord:
     jobs_updated: int = 0
     errors_count: int = 0
     errors: list[str] = field(default_factory=list)
+    run_status: str = "completed"
 
     def to_item(self) -> dict[str, Any]:
         return asdict(self)
@@ -123,6 +124,7 @@ class CrawlRunRecord:
         for key in ("pages_checked", "jobs_found", "jobs_inserted", "jobs_updated", "errors_count"):
             payload[key] = int(payload.get(key, 0) or 0)
         payload["errors"] = list(payload.get("errors") or [])
+        payload["run_status"] = str(payload.get("run_status") or "completed")
         return cls(**payload)
 
 

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import time
 from abc import ABC, abstractmethod
 from pathlib import Path
 from typing import Any
@@ -121,6 +122,14 @@ class JobRepository(ABC):
 
     @abstractmethod
     def latest_crawl_run(self) -> CrawlRunRecord | None:
+        raise NotImplementedError
+
+    @abstractmethod
+    def acquire_collector_lock(self, *, lock_id: str, expires_at_epoch: int) -> bool:
+        raise NotImplementedError
+
+    @abstractmethod
+    def release_collector_lock(self, *, lock_id: str) -> None:
         raise NotImplementedError
 
     @abstractmethod
@@ -269,11 +278,32 @@ class LocalJsonRepository(JobRepository):
         records = [
             CrawlRunRecord.from_item(item)
             for item in self._read_json(self.runs_path)
-            if item.get("finished_at")
+            if item.get("finished_at") and item.get("run_status", "completed") not in {"failed", "running", "skipped"}
         ]
         if not records:
             return None
         return sorted(records, key=lambda item: item.finished_at or item.started_at, reverse=True)[0]
+
+    def _lock_path(self) -> Path:
+        return self.runs_path.with_name("collector_lock.json")
+
+    def acquire_collector_lock(self, *, lock_id: str, expires_at_epoch: int) -> bool:
+        now_epoch = int(time.time())
+        path = self._lock_path()
+        if path.exists():
+            item = json.loads(path.read_text(encoding="utf-8"))
+            if int(item.get("expires_at_epoch", 0)) > now_epoch:
+                return False
+        path.write_text(json.dumps({"lock_id": lock_id, "expires_at_epoch": expires_at_epoch}), encoding="utf-8")
+        return True
+
+    def release_collector_lock(self, *, lock_id: str) -> None:
+        path = self._lock_path()
+        if not path.exists():
+            return
+        item = json.loads(path.read_text(encoding="utf-8"))
+        if item.get("lock_id") == lock_id:
+            path.unlink()
 
     def upsert_source(self, source: SourceConfig) -> str:
         items = self._read_json(self.sources_path)
@@ -638,11 +668,48 @@ class DynamoJobRepository(JobRepository):
         records = [
             CrawlRunRecord.from_item(item)
             for item in items
-            if item.get("finished_at")
+            if item.get("finished_at") and item.get("run_status", "completed") not in {"failed", "running", "skipped"}
         ]
         if not records:
             return None
         return sorted(records, key=lambda item: item.finished_at or item.started_at, reverse=True)[0]
+
+    def acquire_collector_lock(self, *, lock_id: str, expires_at_epoch: int) -> bool:
+        from botocore.exceptions import ClientError
+
+        try:
+            self.crawl_runs_table.put_item(
+                Item={
+                    "run_id": "__collector_lock__",
+                    "lock_id": lock_id,
+                    "expires_at_epoch": expires_at_epoch,
+                },
+                ConditionExpression="attribute_not_exists(run_id) OR expires_at_epoch < :now",
+                ExpressionAttributeValues={":now": int(time.time())},
+            )
+        except ClientError as exc:
+            if exc.response.get("Error", {}).get("Code") == "ConditionalCheckFailedException":
+                return False
+            raise
+        return True
+
+    def release_collector_lock(self, *, lock_id: str) -> None:
+        from botocore.exceptions import ClientError
+
+        try:
+            self.crawl_runs_table.update_item(
+                Key={"run_id": "__collector_lock__"},
+                UpdateExpression="SET expires_at_epoch = :expired",
+                ConditionExpression="lock_id = :lock_id",
+                ExpressionAttributeValues={
+                    ":expired": 0,
+                    ":lock_id": lock_id,
+                },
+            )
+        except ClientError as exc:
+            if exc.response.get("Error", {}).get("Code") == "ConditionalCheckFailedException":
+                return
+            raise
 
     def upsert_source(self, source: SourceConfig) -> str:
         source_id = stable_source_id(source.source_type, source.identifier)

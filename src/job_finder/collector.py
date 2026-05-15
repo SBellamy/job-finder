@@ -140,85 +140,105 @@ def collect_sources(
     discovery_settings: DiscoverySettings | None = None,
 ) -> CrawlRunRecord:
     settings = discovery_settings or DiscoverySettings()
-    active_sources = resolve_sources(sources, settings, repository)
-    feedback_jobs = repository.list_feedback_jobs(limit=1000)
-    feedback_profile = build_feedback_profile(feedback_jobs)
     started_at = utc_now_iso()
     run = CrawlRunRecord(
         run_id=f"run-{datetime.now(UTC).strftime('%Y%m%dT%H%M%S')}-{uuid4().hex[:8]}",
         started_at=started_at,
         source="discovery" if not sources else "manual",
+        run_status="running",
     )
-    logger.info(
-        "Starting collection run %s with %s sources and %s feedback jobs",
-        run.run_id,
-        len(active_sources),
-        len(feedback_jobs),
-    )
-    if not active_sources:
-        run.errors_count += 1
-        run.errors.append("No ATS sources available for collection")
-    for source in active_sources:
-        if not source.enabled:
-            continue
-        run.pages_checked += 1
-        try:
-            payload, raw_jobs = fetch_jobs(source)
-            raw_key = payload_store.store(run.run_id, f"{source.company}-{source.identifier}", payload.get("_raw_body", ""))
-            run.jobs_found += len(raw_jobs)
-            built_jobs = [build_job_record(source, raw_job, raw_key, feedback_profile=feedback_profile) for raw_job in raw_jobs]
-            eligible_jobs = sum(1 for job in built_jobs if job.is_eligible)
-            high_score_jobs = sum(1 for job in built_jobs if job.score >= 60)
-            total_score = sum(job.score for job in built_jobs)
-            top_score = max((job.score for job in built_jobs), default=0)
-            repository.record_source_result(
-                source,
-                was_success=True,
-                jobs_found=len(built_jobs),
-                eligible_jobs=eligible_jobs,
-                high_score_jobs=high_score_jobs,
-                total_score=total_score,
-                top_score=top_score,
-                disable_after_errors=settings.source_error_threshold,
-            )
-            for job in built_jobs:
-                result = repository.upsert_job(job)
-                if result == "inserted":
-                    run.jobs_inserted += 1
-                else:
-                    run.jobs_updated += 1
-            logger.info(
-                "Run %s processed %s (%s:%s): found=%s inserted=%s updated=%s eligible=%s high_score=%s",
-                run.run_id,
-                source.company,
-                source.source_type,
-                source.identifier,
-                len(built_jobs),
-                run.jobs_inserted,
-                run.jobs_updated,
-                eligible_jobs,
-                high_score_jobs,
-            )
-        except Exception as exc:  # pragma: no cover - kept broad to protect scheduled runs
+    lock_expires_at_epoch = int(datetime.now(UTC).timestamp()) + 900
+    if not repository.acquire_collector_lock(lock_id=run.run_id, expires_at_epoch=lock_expires_at_epoch):
+        run.run_status = "skipped"
+        run.finished_at = utc_now_iso()
+        run.errors.append("Skipped because another collector run is already active")
+        repository.record_crawl_run(run)
+        logger.info("Skipped collection run %s because another run is active", run.run_id)
+        return run
+
+    try:
+        active_sources = resolve_sources(sources, settings, repository)
+        feedback_jobs = repository.list_feedback_jobs(limit=1000)
+        feedback_profile = build_feedback_profile(feedback_jobs)
+        logger.info(
+            "Starting collection run %s with %s sources and %s feedback jobs",
+            run.run_id,
+            len(active_sources),
+            len(feedback_jobs),
+        )
+        if not active_sources:
             run.errors_count += 1
-            error_message = f"{source.company} ({source.source_type}:{source.identifier}): {exc}"
-            repository.record_source_result(
-                source,
-                was_success=False,
-                error_message=error_message,
-                disable_after_errors=settings.source_error_threshold,
-            )
-            run.errors.append(error_message)
-            logger.exception("Run %s failed for %s (%s:%s)", run.run_id, source.company, source.source_type, source.identifier)
-    run.finished_at = utc_now_iso()
-    repository.record_crawl_run(run)
-    logger.info(
-        "Completed run %s: pages_checked=%s jobs_found=%s inserted=%s updated=%s errors=%s",
-        run.run_id,
-        run.pages_checked,
-        run.jobs_found,
-        run.jobs_inserted,
-        run.jobs_updated,
-        run.errors_count,
-    )
+            run.errors.append("No ATS sources available for collection")
+        for source in active_sources:
+            if not source.enabled:
+                continue
+            run.pages_checked += 1
+            try:
+                payload, raw_jobs = fetch_jobs(source)
+                raw_key = payload_store.store(run.run_id, f"{source.company}-{source.identifier}", payload.get("_raw_body", ""))
+                run.jobs_found += len(raw_jobs)
+                built_jobs = [build_job_record(source, raw_job, raw_key, feedback_profile=feedback_profile) for raw_job in raw_jobs]
+                eligible_jobs = sum(1 for job in built_jobs if job.is_eligible)
+                high_score_jobs = sum(1 for job in built_jobs if job.score >= 60)
+                total_score = sum(job.score for job in built_jobs)
+                top_score = max((job.score for job in built_jobs), default=0)
+                repository.record_source_result(
+                    source,
+                    was_success=True,
+                    jobs_found=len(built_jobs),
+                    eligible_jobs=eligible_jobs,
+                    high_score_jobs=high_score_jobs,
+                    total_score=total_score,
+                    top_score=top_score,
+                    disable_after_errors=settings.source_error_threshold,
+                )
+                for job in built_jobs:
+                    result = repository.upsert_job(job)
+                    if result == "inserted":
+                        run.jobs_inserted += 1
+                    else:
+                        run.jobs_updated += 1
+                logger.info(
+                    "Run %s processed %s (%s:%s): found=%s inserted=%s updated=%s eligible=%s high_score=%s",
+                    run.run_id,
+                    source.company,
+                    source.source_type,
+                    source.identifier,
+                    len(built_jobs),
+                    run.jobs_inserted,
+                    run.jobs_updated,
+                    eligible_jobs,
+                    high_score_jobs,
+                )
+            except Exception as exc:  # pragma: no cover - kept broad to protect scheduled runs
+                run.errors_count += 1
+                error_message = f"{source.company} ({source.source_type}:{source.identifier}): {exc}"
+                repository.record_source_result(
+                    source,
+                    was_success=False,
+                    error_message=error_message,
+                    disable_after_errors=settings.source_error_threshold,
+                )
+                run.errors.append(error_message)
+                logger.exception("Run %s failed for %s (%s:%s)", run.run_id, source.company, source.source_type, source.identifier)
+        run.run_status = "completed_with_errors" if run.errors_count else "completed"
+    except Exception as exc:  # pragma: no cover - protects scheduled runs before source loop starts
+        run.run_status = "failed"
+        run.errors_count += 1
+        run.errors.append(f"Collector failed: {exc}")
+        logger.exception("Run %s failed before completion", run.run_id)
+    finally:
+        run.finished_at = utc_now_iso()
+        repository.record_crawl_run(run)
+        repository.release_collector_lock(lock_id=run.run_id)
+        logger.info(
+            "Completed run %s with status=%s: pages_checked=%s jobs_found=%s inserted=%s updated=%s errors=%s",
+            run.run_id,
+            run.run_status,
+            run.pages_checked,
+            run.jobs_found,
+            run.jobs_inserted,
+            run.jobs_updated,
+            run.errors_count,
+        )
     return run

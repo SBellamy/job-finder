@@ -648,6 +648,31 @@ class DiscoveryTests(unittest.TestCase):
             self.assertEqual(run.jobs_inserted, 1)
             self.assertEqual(repo.list_sources(limit=10)[0].identifier, "netlify")
 
+    def test_collect_skips_when_lock_is_active(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            repo = LocalJsonRepository(
+                jobs_path=str(Path(temp_dir) / "jobs.json"),
+                runs_path=str(Path(temp_dir) / "runs.json"),
+            )
+            payload_store = LocalPayloadStore(base_path=str(Path(temp_dir) / "raw"))
+            repo.acquire_collector_lock(
+                lock_id="existing-run",
+                expires_at_epoch=int((datetime.now(UTC) + timedelta(minutes=5)).timestamp()),
+            )
+
+            from job_finder.collector import collect_sources
+
+            run = collect_sources(
+                [],
+                repo,
+                payload_store,
+                discovery_settings=DiscoverySettings(max_sources_per_run=1),
+            )
+
+            self.assertEqual(run.run_status, "skipped")
+            self.assertEqual(run.pages_checked, 0)
+            self.assertIsNone(repo.latest_crawl_run())
+
     def test_discovery_unions_multiple_strategies(self) -> None:
         with patch(
             "job_finder.discovery.discover_urls_via_bing_rss",
