@@ -1,7 +1,10 @@
 from __future__ import annotations
 
+import json
 import logging
+import time
 from datetime import UTC, datetime
+from typing import Any
 from uuid import uuid4
 
 from job_finder.ats import fetch_jobs
@@ -14,6 +17,10 @@ from job_finder.storage import JobRepository, RawPayloadStore
 
 logger = logging.getLogger(__name__)
 logger.setLevel(logging.INFO)
+
+
+def _log_event(event: str, **payload: Any) -> None:
+    logger.info(json.dumps({"event": event, **payload}, sort_keys=True, default=str))
 
 
 def build_job_record(
@@ -128,7 +135,12 @@ def resolve_sources(
 ) -> list[SourceConfig]:
     if explicit_sources:
         return _apply_source_controls(explicit_sources)
-    fresh_sources = discover_sources(discovery_settings)
+    fresh_sources: list[SourceConfig] = []
+    try:
+        fresh_sources = discover_sources(discovery_settings)
+    except Exception as exc:
+        _log_event("collector_discovery_failed", error=str(exc))
+        logger.exception("Source discovery failed; continuing with existing source catalog")
     for source in fresh_sources:
         repository.upsert_source(source)
     active_sources = repository.list_sources(
@@ -156,6 +168,7 @@ def collect_sources(
     discovery_settings: DiscoverySettings | None = None,
 ) -> CrawlRunRecord:
     settings = discovery_settings or DiscoverySettings()
+    started_monotonic = time.monotonic()
     started_at = utc_now_iso()
     run = CrawlRunRecord(
         run_id=f"run-{datetime.now(UTC).strftime('%Y%m%dT%H%M%S')}-{uuid4().hex[:8]}",
@@ -169,18 +182,19 @@ def collect_sources(
         run.finished_at = utc_now_iso()
         run.errors.append("Skipped because another collector run is already active")
         repository.record_crawl_run(run)
-        logger.info("Skipped collection run %s because another run is active", run.run_id)
+        _log_event("collector_run_skipped", run_id=run.run_id, reason="active_lock")
         return run
 
     try:
         active_sources = resolve_sources(sources, settings, repository)
         feedback_jobs = repository.list_feedback_jobs(limit=1000)
         feedback_profile = build_feedback_profile(feedback_jobs)
-        logger.info(
-            "Starting collection run %s with %s sources and %s feedback jobs",
-            run.run_id,
-            len(active_sources),
-            len(feedback_jobs),
+        _log_event(
+            "collector_run_started",
+            run_id=run.run_id,
+            source_count=len(active_sources),
+            feedback_job_count=len(feedback_jobs),
+            run_source=run.source,
         )
         if not active_sources:
             run.errors_count += 1
@@ -189,6 +203,9 @@ def collect_sources(
             if not source.enabled:
                 continue
             run.pages_checked += 1
+            source_started = time.monotonic()
+            source_id = f"{source.source_type}:{source.identifier}"
+            _log_event("collector_source_started", run_id=run.run_id, source_id=source_id, company=source.company)
             try:
                 payload, raw_jobs = fetch_jobs(source)
                 raw_key = payload_store.store(run.run_id, f"{source.company}-{source.identifier}", payload.get("_raw_body", ""))
@@ -198,6 +215,8 @@ def collect_sources(
                 high_score_jobs = sum(1 for job in built_jobs if job.score >= 60)
                 total_score = sum(job.score for job in built_jobs)
                 top_score = max((job.score for job in built_jobs), default=0)
+                source_inserted = 0
+                source_updated = 0
                 repository.record_source_result(
                     source,
                     was_success=True,
@@ -212,19 +231,22 @@ def collect_sources(
                     result = repository.upsert_job(job)
                     if result == "inserted":
                         run.jobs_inserted += 1
+                        source_inserted += 1
                     else:
                         run.jobs_updated += 1
-                logger.info(
-                    "Run %s processed %s (%s:%s): found=%s inserted=%s updated=%s eligible=%s high_score=%s",
-                    run.run_id,
-                    source.company,
-                    source.source_type,
-                    source.identifier,
-                    len(built_jobs),
-                    run.jobs_inserted,
-                    run.jobs_updated,
-                    eligible_jobs,
-                    high_score_jobs,
+                        source_updated += 1
+                _log_event(
+                    "collector_source_completed",
+                    run_id=run.run_id,
+                    source_id=source_id,
+                    company=source.company,
+                    jobs_found=len(built_jobs),
+                    jobs_inserted=source_inserted,
+                    jobs_updated=source_updated,
+                    eligible_jobs=eligible_jobs,
+                    high_score_jobs=high_score_jobs,
+                    top_score=top_score,
+                    duration_seconds=round(time.monotonic() - source_started, 3),
                 )
             except Exception as exc:  # pragma: no cover - kept broad to protect scheduled runs
                 run.errors_count += 1
@@ -236,25 +258,35 @@ def collect_sources(
                     disable_after_errors=settings.source_error_threshold,
                 )
                 run.errors.append(error_message)
+                _log_event(
+                    "collector_source_failed",
+                    run_id=run.run_id,
+                    source_id=source_id,
+                    company=source.company,
+                    error=str(exc),
+                    duration_seconds=round(time.monotonic() - source_started, 3),
+                )
                 logger.exception("Run %s failed for %s (%s:%s)", run.run_id, source.company, source.source_type, source.identifier)
         run.run_status = "completed_with_errors" if run.errors_count else "completed"
     except Exception as exc:  # pragma: no cover - protects scheduled runs before source loop starts
         run.run_status = "failed"
         run.errors_count += 1
         run.errors.append(f"Collector failed: {exc}")
+        _log_event("collector_run_failed", run_id=run.run_id, error=str(exc))
         logger.exception("Run %s failed before completion", run.run_id)
     finally:
         run.finished_at = utc_now_iso()
         repository.record_crawl_run(run)
         repository.release_collector_lock(lock_id=run.run_id)
-        logger.info(
-            "Completed run %s with status=%s: pages_checked=%s jobs_found=%s inserted=%s updated=%s errors=%s",
-            run.run_id,
-            run.run_status,
-            run.pages_checked,
-            run.jobs_found,
-            run.jobs_inserted,
-            run.jobs_updated,
-            run.errors_count,
+        _log_event(
+            "collector_run_completed",
+            run_id=run.run_id,
+            run_status=run.run_status,
+            pages_checked=run.pages_checked,
+            jobs_found=run.jobs_found,
+            jobs_inserted=run.jobs_inserted,
+            jobs_updated=run.jobs_updated,
+            errors_count=run.errors_count,
+            duration_seconds=round(time.monotonic() - started_monotonic, 3),
         )
     return run

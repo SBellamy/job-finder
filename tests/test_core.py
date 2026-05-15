@@ -1002,6 +1002,52 @@ class DiscoveryTests(unittest.TestCase):
             self.assertEqual(run.jobs_inserted, 1)
             self.assertEqual(repo.list_sources(limit=10)[0].identifier, "netlify")
 
+    def test_collect_reuses_catalog_when_discovery_fails_and_logs_json_events(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            repo = LocalJsonRepository(
+                jobs_path=str(Path(temp_dir) / "jobs.json"),
+                runs_path=str(Path(temp_dir) / "runs.json"),
+                sources_path=str(Path(temp_dir) / "sources.json"),
+            )
+            payload_store = LocalPayloadStore(base_path=str(Path(temp_dir) / "raw"))
+            persisted_source = make_source(company="netlify", source_type="lever", identifier="netlify")
+            repo.upsert_source(persisted_source)
+
+            with patch("job_finder.collector.discover_sources", side_effect=RuntimeError("search unavailable")), patch(
+                "job_finder.collector.fetch_jobs",
+                return_value=(
+                    {"_raw_body": "{\"jobs\": 1}"},
+                    [
+                        {
+                            "source_job_id": "catalog-fallback",
+                            "title": "Platform Engineer",
+                            "location_text": "Remote, United States",
+                            "description_text": "AWS Terraform automation",
+                            "apply_url": "https://jobs.lever.co/netlify/catalog-fallback",
+                        }
+                    ],
+                ),
+            ), self.assertLogs("job_finder.collector", level="INFO") as logs:
+                from job_finder.collector import collect_sources
+
+                run = collect_sources(
+                    [],
+                    repo,
+                    payload_store,
+                    discovery_settings=DiscoverySettings(enabled=True, keywords=["platform"], max_sources_per_run=5),
+                )
+
+            self.assertEqual(run.run_status, "completed")
+            self.assertEqual(run.jobs_inserted, 1)
+            events = []
+            for message in logs.output:
+                payload = message.split(":", 2)[-1]
+                if payload.startswith("{"):
+                    events.append(json.loads(payload)["event"])
+            self.assertIn("collector_discovery_failed", events)
+            self.assertIn("collector_source_completed", events)
+            self.assertIn("collector_run_completed", events)
+
     def test_collect_skips_when_lock_is_active(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
             repo = LocalJsonRepository(
