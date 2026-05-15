@@ -3,17 +3,17 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>Job Finder</title>
+    <title>Job Finder | Daily Role Radar</title>
     <link rel="stylesheet" href="./styles.css" />
   </head>
   <body>
     <div class="shell">
       <header class="hero">
-        <div>
-          <p class="eyebrow">Remote Infrastructure Roles</p>
-          <h1>New DevOps and platform jobs, ranked for fit.</h1>
+        <div class="hero-copy">
+          <p class="eyebrow">Daily Role Radar</p>
+          <h1>A sharper feed for infrastructure roles.</h1>
           <p class="lede">
-            Direct employer and ATS postings tuned for AWS, Terraform, automation, and observability.
+            Fresh ATS postings tuned for AWS, Terraform, automation, observability, and platform ownership.
           </p>
         </div>
         <div class="hero-panel" id="summary">
@@ -72,7 +72,7 @@
         <button class="ghost" id="exportButton" type="button">Export CSV</button>
       </section>
 
-      <section class="meta-row">
+      <section class="meta-row" aria-live="polite">
         <p id="statusLine">Loading jobs...</p>
         <p class="muted" id="apiLine"></p>
       </section>

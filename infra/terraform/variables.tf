@@ -100,7 +100,7 @@ variable "collector_discovery" {
     source_error_threshold         = optional(number, 2)
     max_low_value_rechecks_per_run = optional(number, 3)
     low_value_retry_hours          = optional(number, 48)
-    source_types                   = optional(list(string), ["ashby", "greenhouse", "lever", "workable"])
+    source_types                   = optional(list(string), ["ashby", "greenhouse", "lever", "smartrecruiters", "workable"])
   })
   default = {}
 }

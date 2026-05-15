@@ -20,6 +20,14 @@ That said, the project still has several structural risks:
 | Frontend | Static dashboard works and has core review actions | It lacks clear crawl status, paging, and recent-run visibility |
 | Security | Public-release cleanup started | Credentials, CORS, and IAM should be tightened before broader use |
 
+## Priority Update
+
+The next iterations should bias more heavily toward coverage and review speed:
+
+- Deeper scraping and discovery move ahead of lower-value workflow polish. Adding stable ATS providers, richer provider detail fetches, and resilient source discovery should happen before fragile one-off page scraping.
+- Frontend modernization moves into the active sprint. The dashboard should feel like a daily review cockpit: fast to scan, clearer about freshness/source quality, and less visually cluttered.
+- Read-model work remains important, but projected reads and pagination have reduced the immediate pain enough to focus on better results and review ergonomics first.
+
 ## Planning Assumptions
 
 - Sprint length: 1 week.
@@ -359,23 +367,44 @@ Acceptance criteria:
 - Discovery errors do not prevent known source collection.
 - Source catalog records last discovered time separately from last checked time.
 
-### 4.2 Add Direct Careers Page Support
+### 4.2 Add Stable Provider Coverage
 
-Priority: P3
+Priority: P1
 
-Problem: some relevant companies do not expose jobs through the current ATS providers.
+Problem: some relevant companies use stable ATS platforms not currently collected, so search can find them but collection cannot turn them into scored jobs.
 
 Scope:
 
-- Identify a small set of direct-careers targets.
-- Add provider adapters only where there is stable structured data.
-- Avoid fragile scraping unless the value is clear.
+- Add provider adapters for stable public APIs before brittle HTML scraping.
+- Fetch provider detail payloads when list APIs omit full descriptions.
+- Keep per-source limits so one large company cannot consume the whole collector run.
+- Avoid fragile direct careers page scraping unless the value is clear.
 
 Acceptance criteria:
 
-- At least one non-ATS source type works end to end.
-- Source health tracking applies to direct sources.
+- At least one new provider source type works end to end.
+- Detail enrichment improves scoring inputs without logging raw payloads.
+- Source health tracking applies to the new provider.
 - Failures are isolated to the source adapter.
+
+### 4.4 Deeper Discovery Tuning
+
+Priority: P1
+
+Problem: discovery is currently keyword-driven and can miss good boards if a search provider returns shallow or noisy results.
+
+Scope:
+
+- Expand the provider list where stable APIs exist.
+- Track which strategy and URL produced a source.
+- Increase discovery depth selectively by source type.
+- Keep collection resilient when discovery is slow or partially failing.
+
+Acceptance criteria:
+
+- Collector can still process known-good sources if discovery fails.
+- New sources include enough metadata to debug where they came from.
+- Live discovery produces new candidates without materially increasing collector failures.
 
 ### 4.3 Source Seeding Workflow
 
@@ -572,4 +601,3 @@ Track these after each sprint:
 3. Run Terraform plan and resolve drift.
 4. Build recent-crawl dashboard panel.
 5. Collect a labeled sample of false positives from the latest feed and turn them into scoring tests.
-

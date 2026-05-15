@@ -86,7 +86,7 @@ class DiscoverySettings:
     source_error_threshold: int = 2
     max_low_value_rechecks_per_run: int = 3
     low_value_retry_hours: int = 48
-    source_types: list[str] = field(default_factory=lambda: ["ashby", "greenhouse", "lever", "workable"])
+    source_types: list[str] = field(default_factory=lambda: ["ashby", "greenhouse", "lever", "smartrecruiters", "workable"])
 
     @classmethod
     def from_dict(cls, data: dict[str, Any]) -> "DiscoverySettings":
@@ -101,7 +101,7 @@ class DiscoverySettings:
             source_error_threshold=max(1, int(data.get("source_error_threshold", 2))),
             max_low_value_rechecks_per_run=max(0, int(data.get("max_low_value_rechecks_per_run", 3))),
             low_value_retry_hours=max(1, int(data.get("low_value_retry_hours", 48))),
-            source_types=[str(item).strip().lower() for item in data.get("source_types", ["ashby", "greenhouse", "lever", "workable"])],
+            source_types=[str(item).strip().lower() for item in data.get("source_types", ["ashby", "greenhouse", "lever", "smartrecruiters", "workable"])],
         )
 
     def to_dict(self) -> dict[str, Any]:

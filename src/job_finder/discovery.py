@@ -26,6 +26,11 @@ ATS_DISCOVERY_CONFIG: dict[str, dict[str, object]] = {
         "allowed_hosts": {"jobs.lever.co"},
         "blocked_identifiers": set(),
     },
+    "smartrecruiters": {
+        "queries": ["site:jobs.smartrecruiters.com {keyword}"],
+        "allowed_hosts": {"jobs.smartrecruiters.com"},
+        "blocked_identifiers": {"oneclick-ui"},
+    },
     "workable": {
         "queries": ["site:apply.workable.com {keyword}"],
         "allowed_hosts": {"apply.workable.com"},
@@ -97,6 +102,10 @@ def extract_source_from_url(source_type: str, url: str) -> SourceConfig | None:
         if path_parts:
             identifier = path_parts[0]
             careers_url = f"https://jobs.ashbyhq.com/{identifier}"
+    elif source_type == "smartrecruiters":
+        if path_parts:
+            identifier = path_parts[0]
+            careers_url = f"https://jobs.smartrecruiters.com/{identifier}"
     elif source_type == "workable":
         if path_parts and path_parts[0] not in {"jobs"}:
             identifier = path_parts[0]

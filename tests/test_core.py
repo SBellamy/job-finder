@@ -13,6 +13,7 @@ from unittest.mock import patch
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 
 from job_finder.api import export_jobs, get_digest, get_freshness, get_job, list_jobs, list_sources, update_job, update_source_control
+from job_finder.ats.smartrecruiters import fetch_smartrecruiters_jobs
 from job_finder.collector import build_job_record
 from job_finder.discovery import discover_sources, extract_source_from_url
 from job_finder.lambda_handlers import _emit_crawl_metrics, api_handler
@@ -864,17 +865,65 @@ class DiscoveryTests(unittest.TestCase):
         lever = extract_source_from_url("lever", "https://jobs.lever.co/netlify/platform-engineer")
         greenhouse = extract_source_from_url("greenhouse", "https://boards.greenhouse.io/clickhouse/jobs/5335613004")
         ashby = extract_source_from_url("ashby", "https://jobs.ashbyhq.com/notion/0f0d5160-fake")
+        smartrecruiters = extract_source_from_url("smartrecruiters", "https://jobs.smartrecruiters.com/sonarsource/123-platform-engineer")
         workable = extract_source_from_url("workable", "https://apply.workable.com/sourcegraph/j/ABC123")
 
         assert lever is not None
         assert greenhouse is not None
         assert ashby is not None
+        assert smartrecruiters is not None
         assert workable is not None
 
         self.assertEqual(lever.identifier, "netlify")
         self.assertEqual(greenhouse.identifier, "clickhouse")
         self.assertEqual(ashby.identifier, "notion")
+        self.assertEqual(smartrecruiters.identifier, "sonarsource")
         self.assertEqual(workable.identifier, "sourcegraph")
+
+    def test_smartrecruiters_fetch_enriches_listing_with_detail(self) -> None:
+        source = make_source(company="sonarsource", source_type="smartrecruiters", identifier="sonarsource")
+
+        def fake_fetch_json(url: str, **_kwargs: object) -> tuple[dict[str, object], str]:
+            if url.endswith("/postings?limit=100&offset=0"):
+                return (
+                    {
+                        "content": [
+                            {
+                                "id": "abc123",
+                                "name": "Infrastructure Engineer",
+                                "location": {"city": "Austin", "region": "TX", "country": "United States", "remote": True},
+                                "releasedDate": "2026-05-01T00:00:00Z",
+                                "postingUrl": "https://jobs.smartrecruiters.com/sonarsource/abc123",
+                            }
+                        ]
+                    },
+                    "{}",
+                )
+            if url.endswith("/postings?limit=100&offset=100"):
+                return ({"content": []}, "{}")
+            return (
+                {
+                    "id": "abc123",
+                    "jobAd": {
+                        "sections": {
+                            "jobDescription": "Build AWS infrastructure with Terraform and observability.",
+                            "qualifications": "Linux automation experience.",
+                        }
+                    },
+                    "department": {"label": "Engineering"},
+                    "typeOfEmployment": "Full-time",
+                },
+                "{}",
+            )
+
+        with patch("job_finder.ats.smartrecruiters.fetch_json", side_effect=fake_fetch_json):
+            payload, jobs = fetch_smartrecruiters_jobs(source)
+
+        self.assertEqual(payload["detail_fetches"], 1)
+        self.assertEqual(jobs[0]["source_job_id"], "abc123")
+        self.assertEqual(jobs[0]["location_text"], "Austin, TX, United States")
+        self.assertTrue(jobs[0]["remote_hint"])
+        self.assertIn("Terraform", jobs[0]["description_text"])
 
     def test_collect_uses_discovery_when_no_manual_sources_are_provided(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:

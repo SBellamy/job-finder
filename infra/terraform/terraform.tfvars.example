@@ -19,7 +19,7 @@ collector_discovery = {
   source_error_threshold = 2
   max_low_value_rechecks_per_run = 3
   low_value_retry_hours = 48
-  source_types        = ["ashby", "greenhouse", "lever", "workable"]
+  source_types        = ["ashby", "greenhouse", "lever", "smartrecruiters", "workable"]
 }
 
 # Optional manual overrides for specific ATS boards.
