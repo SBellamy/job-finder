@@ -12,7 +12,7 @@ from unittest.mock import patch
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 
-from job_finder.api import export_jobs, get_digest, get_freshness, get_job, list_jobs, list_sources, update_job, update_source_control
+from job_finder.api import create_source, export_jobs, get_digest, get_freshness, get_job, list_jobs, list_sources, update_job, update_source_control
 from job_finder.ats.smartrecruiters import fetch_smartrecruiters_jobs
 from job_finder.collector import build_job_record
 from job_finder.discovery import discover_sources, extract_source_from_url
@@ -837,6 +837,29 @@ class LocalRepositoryTests(unittest.TestCase):
             self.assertTrue(payload["metadata"]["blocked"])
             self.assertEqual(payload["metadata"]["priority"], 25)
             self.assertEqual(payload["metadata"]["control_note"], "too noisy")
+
+    def test_sources_api_can_seed_manual_source(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            repo = LocalJsonRepository(
+                jobs_path=str(Path(temp_dir) / "jobs.json"),
+                runs_path=str(Path(temp_dir) / "runs.json"),
+                sources_path=str(Path(temp_dir) / "sources.json"),
+            )
+
+            result = create_source(
+                repo,
+                {
+                    "company": "SeedCo",
+                    "source_type": "smartrecruiters",
+                    "identifier": "SeedCo",
+                    "careers_url": "https://jobs.smartrecruiters.com/SeedCo",
+                    "priority": 80,
+                },
+            )
+
+            self.assertEqual(result["operation"], "inserted")
+            self.assertEqual(result["item"]["status"], "manual")
+            self.assertEqual(result["item"]["metadata"]["priority"], 80)
 
     def test_source_quality_prefers_strong_match_boards_over_large_noisy_boards(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:

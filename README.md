@@ -94,6 +94,14 @@ PYTHONPATH=src python3 -m job_finder seed-sources \
 
 Seeded sources are treated as manual, prioritized during collection, and preserved in the catalog across later runs.
 
+For the deployed API, the same idea is available through `POST /sources`:
+
+```bash
+curl -X POST "$API_BASE_URL/sources" \
+  -H 'Content-Type: application/json' \
+  -d '{"company":"Example","source_type":"lever","identifier":"example","priority":75}'
+```
+
 ## Dashboard
 
 The frontend is plain static HTML, CSS, and JavaScript.

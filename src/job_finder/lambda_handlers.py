@@ -8,7 +8,7 @@ from decimal import Decimal
 from typing import Any
 from urllib.parse import unquote
 
-from job_finder.api import export_jobs, get_digest, get_freshness, get_job, list_jobs, list_sources, update_job, update_source_control
+from job_finder.api import create_source, export_jobs, get_digest, get_freshness, get_job, list_jobs, list_sources, update_job, update_source_control
 from job_finder.collector import collect_sources
 from job_finder.config import load_allowed_origin, load_discovery_settings, load_sources_from_event, load_storage_settings
 from job_finder.models import CrawlRunRecord
@@ -160,6 +160,9 @@ def api_handler(event: dict[str, Any], _context: Any) -> dict[str, Any]:
         if method == "GET" and path == "/sources":
             query = event.get("queryStringParameters") or {}
             return _response(200, list_sources(repository, query))
+        if method == "POST" and path == "/sources":
+            payload = json.loads(event.get("body") or "{}")
+            return _response(200, create_source(repository, payload))
         if method == "PATCH" and path.startswith("/sources/"):
             source_id = unquote(path.rsplit("/", 1)[-1])
             payload = json.loads(event.get("body") or "{}")

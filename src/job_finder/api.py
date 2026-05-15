@@ -9,7 +9,7 @@ from collections import Counter
 from datetime import UTC, datetime
 from typing import Any
 
-from job_finder.models import text_excerpt, utc_now_iso
+from job_finder.models import SourceConfig, stable_source_id, text_excerpt, utc_now_iso
 from job_finder.storage import JobRepository
 from job_finder.storage import source_quality_score
 
@@ -289,6 +289,34 @@ def list_sources(repository: JobRepository, query: dict[str, str | None]) -> dic
         payload["quality_score"] = source_quality_score(record)
         items.append(payload)
     return {"items": items, "count": len(items)}
+
+
+def create_source(repository: JobRepository, payload: dict[str, Any]) -> dict[str, Any]:
+    source_payload = dict(payload)
+    metadata = dict(source_payload.get("metadata") or {})
+    priority = source_payload.pop("priority", None)
+    seeded = source_payload.pop("seeded", True)
+    if seeded:
+        metadata["seeded"] = True
+        metadata["status"] = str(metadata.get("status") or "manual")
+        metadata["priority"] = int(metadata.get("priority") or priority or 75)
+    elif priority is not None:
+        metadata["priority"] = int(priority)
+    source_payload["metadata"] = metadata
+    source = SourceConfig.from_dict(source_payload)
+    operation = repository.upsert_source(source)
+    source_id = stable_source_id(source.source_type, source.identifier)
+    records = repository.list_source_records(
+        enabled_only=False,
+        statuses=("manual", "active", "candidate", "low_value", "dead"),
+        limit=500,
+    )
+    for record in records:
+        if record.source_id == source_id:
+            item = record.to_item()
+            item["quality_score"] = source_quality_score(record)
+            return {"operation": operation, "item": item}
+    return {"operation": operation, "item": {"source_id": source_id, **source.to_dict()}}
 
 
 def update_source_control(repository: JobRepository, source_id: str, payload: dict[str, Any]) -> dict[str, Any]:

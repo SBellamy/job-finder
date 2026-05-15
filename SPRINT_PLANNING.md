@@ -42,7 +42,7 @@ Completed and deployed:
 In progress:
 
 - Better posted-date handling, including a newest-posted dashboard sort.
-- Source seeding for known-good boards so coverage does not depend entirely on search.
+- Source seeding for known-good boards so coverage does not depend entirely on search. Local CLI support is in place; deployed API seeding is being added next.
 
 Next highest-value work:
 
