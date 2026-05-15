@@ -151,7 +151,7 @@ def api_handler(event: dict[str, Any], _context: Any) -> dict[str, Any]:
             payload = json.loads(event.get("body") or "{}")
             return _response(200, {"item": update_job(repository, job_id, payload)})
     except KeyError as exc:
-        return _response(404, {"error": f"Unknown job: {exc}"})
+        return _response(404, {"error": f"Unknown resource: {exc}"})
     except ValueError as exc:
         return _response(400, {"error": str(exc)})
     except Exception:
