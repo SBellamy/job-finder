@@ -113,6 +113,7 @@ class JobRepository(ABC):
         eligible_only: bool = True,
         only_new: bool = False,
         sort_by: str = "ranked",
+        offset: int = 0,
         limit: int = 100,
     ) -> list[JobRecord]:
         raise NotImplementedError
@@ -255,6 +256,7 @@ class LocalJsonRepository(JobRepository):
         eligible_only: bool = True,
         only_new: bool = False,
         sort_by: str = "ranked",
+        offset: int = 0,
         limit: int = 100,
     ) -> list[JobRecord]:
         records = [JobRecord.from_item(item) for item in self._read_json(self.jobs_path)]
@@ -271,7 +273,7 @@ class LocalJsonRepository(JobRepository):
                 only_new=only_new,
             )
         ]
-        return _sort_jobs(filtered, sort_by=sort_by)[:limit]
+        return _sort_jobs(filtered, sort_by=sort_by)[offset : offset + limit]
 
     def list_feedback_jobs(self, *, limit: int = 1000) -> list[JobRecord]:
         feedback_statuses = {"saved", "applied", "dismissed"}
@@ -539,6 +541,7 @@ class DynamoJobRepository(JobRepository):
         eligible_only: bool = True,
         only_new: bool = False,
         sort_by: str = "ranked",
+        offset: int = 0,
         limit: int = 100,
     ) -> list[JobRecord]:
         from boto3.dynamodb.conditions import Attr
@@ -621,7 +624,7 @@ class DynamoJobRepository(JobRepository):
                 break
             scan_kwargs["ExclusiveStartKey"] = response["LastEvaluatedKey"]
 
-        return [record for _sort_key, _job_id, record in sorted(matches, reverse=True)[:limit]]
+        return [record for _sort_key, _job_id, record in sorted(matches, reverse=True)[offset : offset + limit]]
 
     def list_feedback_jobs(self, *, limit: int = 1000) -> list[JobRecord]:
         from boto3.dynamodb.conditions import Attr
@@ -694,6 +697,7 @@ class DynamoJobRepository(JobRepository):
         eligible_only: bool = True,
         only_new: bool = False,
         sort_by: str = "ranked",
+        offset: int = 0,
         limit: int = 100,
     ) -> list[JobRecord]:
         if limit <= 250:
@@ -705,6 +709,7 @@ class DynamoJobRepository(JobRepository):
                 eligible_only=eligible_only,
                 only_new=only_new,
                 sort_by=sort_by,
+                offset=offset,
                 limit=limit,
             )
         records = [JobRecord.from_item(item) for item in self._scan_table(self.jobs_table)]
@@ -721,7 +726,7 @@ class DynamoJobRepository(JobRepository):
                 only_new=only_new,
             )
         ]
-        return _sort_jobs(filtered, sort_by=sort_by)[:limit]
+        return _sort_jobs(filtered, sort_by=sort_by)[offset : offset + limit]
 
     def update_job(
         self,

@@ -5,6 +5,7 @@ const state = {
   digest: null,
   sources: [],
   freshness: null,
+  nextCursor: null,
 };
 
 const elements = {
@@ -18,6 +19,7 @@ const elements = {
   sortFilter: document.querySelector("#sortFilter"),
   onlyNewToggle: document.querySelector("#onlyNewToggle"),
   refreshButton: document.querySelector("#refreshButton"),
+  loadMoreButton: document.querySelector("#loadMoreButton"),
   statusLine: document.querySelector("#statusLine"),
   apiLine: document.querySelector("#apiLine"),
   digestGenerated: document.querySelector("#digestGenerated"),
@@ -45,7 +47,7 @@ async function loadConfig() {
   }
 }
 
-function buildJobsUrl() {
+function buildJobsUrl(cursor = null) {
   const url = new URL("/jobs", state.apiBaseUrl);
   const status = elements.statusFilter.value.trim();
   const minScore = elements.scoreFilter.value.trim();
@@ -61,7 +63,10 @@ function buildJobsUrl() {
   }
   url.searchParams.set("eligible_only", "true");
   url.searchParams.set("only_new", elements.onlyNewToggle.checked ? "true" : "false");
-  url.searchParams.set("limit", "200");
+  url.searchParams.set("limit", "50");
+  if (cursor) {
+    url.searchParams.set("cursor", cursor);
+  }
   return url;
 }
 
@@ -148,19 +153,31 @@ function applyClientFilters() {
   renderJobs();
 }
 
-async function fetchJobs() {
-  const url = buildJobsUrl();
-  elements.statusLine.textContent = "Loading jobs...";
+function updateLoadMoreButton() {
+  elements.loadMoreButton.hidden = !state.nextCursor;
+  elements.loadMoreButton.disabled = false;
+  elements.loadMoreButton.textContent = "Load more jobs";
+}
+
+async function fetchJobs({ append = false } = {}) {
+  const url = buildJobsUrl(append ? state.nextCursor : null);
+  elements.statusLine.textContent = append ? "Loading more jobs..." : "Loading jobs...";
+  if (append) {
+    elements.loadMoreButton.disabled = true;
+    elements.loadMoreButton.textContent = "Loading...";
+  }
   const response = await fetch(url, { cache: "no-store" });
   if (!response.ok) {
     throw new Error(`API ${response.status}`);
   }
   const payload = await response.json();
-  state.jobs = payload.items || [];
+  state.jobs = append ? [...state.jobs, ...(payload.items || [])] : payload.items || [];
+  state.nextCursor = payload.next_cursor || null;
   updateSummary();
   updateSourceFilter();
   applyClientFilters();
-  elements.statusLine.textContent = `Showing ${state.filteredJobs.length} jobs`;
+  updateLoadMoreButton();
+  elements.statusLine.textContent = `Showing ${state.filteredJobs.length} loaded jobs`;
 }
 
 function updateJobInState(jobId, changes) {
@@ -513,7 +530,7 @@ async function init() {
     elements.onlyNewToggle,
   ].forEach((element) => {
     element.addEventListener("input", () => {
-      if (element === elements.searchInput || element === elements.sourceFilter || element === elements.sortFilter) {
+      if (element === elements.searchInput || element === elements.sourceFilter) {
         applyClientFilters();
         return;
       }
@@ -522,7 +539,7 @@ async function init() {
       });
     });
     element.addEventListener("change", () => {
-      if (element === elements.searchInput || element === elements.sourceFilter || element === elements.sortFilter) {
+      if (element === elements.searchInput || element === elements.sourceFilter) {
         applyClientFilters();
       }
     });
@@ -531,6 +548,13 @@ async function init() {
   elements.refreshButton.addEventListener("click", () => {
     refreshData().catch((error) => {
       elements.statusLine.textContent = error.message;
+    });
+  });
+
+  elements.loadMoreButton.addEventListener("click", () => {
+    fetchJobs({ append: true }).catch((error) => {
+      elements.statusLine.textContent = error.message;
+      updateLoadMoreButton();
     });
   });
 

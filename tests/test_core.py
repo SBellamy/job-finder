@@ -403,6 +403,55 @@ class LocalRepositoryTests(unittest.TestCase):
             payload = list_jobs(repo, {"eligible_only": "true", "limit": "10", "sort": "newest"})
             self.assertEqual(payload["items"][0]["job_id"], newer_lower_score.job_id)
 
+    def test_jobs_api_returns_cursor_for_next_page(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            repo = LocalJsonRepository(
+                jobs_path=str(Path(temp_dir) / "jobs.json"),
+                runs_path=str(Path(temp_dir) / "runs.json"),
+            )
+            for index in range(3):
+                job = build_job_record(
+                    make_source(company=f"PageCo{index}"),
+                    {
+                        "source_job_id": f"page-{index}",
+                        "title": "Senior DevOps Engineer",
+                        "location_text": "Remote, United States",
+                        "description_text": "AWS Terraform observability CI/CD",
+                        "apply_url": f"https://example.com/jobs/page-{index}",
+                    },
+                    raw_payload_key=None,
+                )
+                job.first_seen_at = f"2026-03-21T10:0{index}:00+00:00"
+                repo.upsert_job(job)
+
+            first_page = list_jobs(repo, {"eligible_only": "true", "limit": "2", "sort": "newest"})
+            self.assertEqual(first_page["count"], 2)
+            self.assertIsNotNone(first_page["next_cursor"])
+
+            second_page = list_jobs(
+                repo,
+                {
+                    "eligible_only": "true",
+                    "limit": "2",
+                    "sort": "newest",
+                    "cursor": first_page["next_cursor"],
+                },
+            )
+            self.assertEqual(second_page["count"], 1)
+            self.assertIsNone(second_page["next_cursor"])
+            self.assertNotEqual(first_page["items"][0]["job_id"], second_page["items"][0]["job_id"])
+
+            with self.assertRaises(ValueError):
+                list_jobs(
+                    repo,
+                    {
+                        "eligible_only": "true",
+                        "limit": "2",
+                        "sort": "ranked",
+                        "cursor": first_page["next_cursor"],
+                    },
+                )
+
     def test_feedback_jobs_only_include_labeled_history(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
             repo = LocalJsonRepository(

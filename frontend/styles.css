@@ -325,6 +325,12 @@ button:hover,
   gap: 16px;
 }
 
+.pagination-row {
+  display: flex;
+  justify-content: center;
+  margin-top: 22px;
+}
+
 .job-card {
   display: grid;
   gap: 16px;
