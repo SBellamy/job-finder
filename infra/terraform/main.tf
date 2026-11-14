@@ -45,6 +45,7 @@ locals {
 data "archive_file" "lambda" {
   type        = "zip"
   source_dir  = "${path.module}/../../src"
+  excludes    = ["**/__pycache__/**", "**/*.pyc"]
   output_path = "${path.module}/build/job_finder_lambda.zip"
 }
 
@@ -344,7 +345,7 @@ resource "aws_apigatewayv2_api" "http" {
 
   cors_configuration {
     allow_headers = ["content-type"]
-    allow_methods = ["GET", "PATCH", "OPTIONS"]
+    allow_methods = ["GET", "POST", "PATCH", "OPTIONS"]
     allow_origins = [var.allowed_origin]
   }
 

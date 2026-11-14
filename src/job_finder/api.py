@@ -6,12 +6,14 @@ import hashlib
 import io
 import json
 from collections import Counter
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from typing import Any
 
 from job_finder.models import SourceConfig, stable_source_id, text_excerpt, utc_now_iso
 from job_finder.storage import JobRepository
-from job_finder.storage import source_quality_score
+from job_finder.storage import _sort_timestamp, source_quality_score
+from job_finder.normalize import normalize_whitespace
+from job_finder.discovery import ATS_DISCOVERY_CONFIG, extract_source_from_url
 
 
 VALID_STATUSES = {"new", "saved", "dismissed", "applied"}
@@ -80,6 +82,20 @@ def _bounded_limit(value: str | None, *, default: int, maximum: int) -> int:
     return max(1, min(int(value or str(default)), maximum))
 
 
+def _search_filters(query: dict[str, str | None]) -> dict[str, Any]:
+    found_after = query.get("found_after") or None
+    if found_after:
+        parsed = _parse_iso_datetime(found_after)
+        if parsed is None or parsed.tzinfo is None:
+            raise ValueError("found_after must be an ISO timestamp with a timezone")
+        found_after = parsed.astimezone(UTC).isoformat()
+    return {
+        "search": (query.get("search") or "").strip() or None,
+        "found_after": found_after,
+        "confirmed_us_only": (query.get("confirmed_us_only") or "false").lower() == "true",
+    }
+
+
 def list_jobs(repository: JobRepository, query: dict[str, str | None]) -> dict[str, Any]:
     limit = _bounded_limit(query.get("limit"), default=DEFAULT_JOBS_LIMIT, maximum=MAX_JOBS_LIMIT)
     min_score = query.get("min_score")
@@ -87,6 +103,7 @@ def list_jobs(repository: JobRepository, query: dict[str, str | None]) -> dict[s
     if sort_by not in VALID_JOB_SORTS:
         raise ValueError(f"Invalid sort: {sort_by}")
     filters = {
+        **_search_filters(query),
         "company": query.get("company") or None,
         "eligible_only": query.get("eligible_only", "true").lower() != "false",
         "min_score": int(min_score) if min_score else None,
@@ -104,6 +121,9 @@ def list_jobs(repository: JobRepository, query: dict[str, str | None]) -> dict[s
         min_score=filters["min_score"],
         eligible_only=filters["eligible_only"],
         only_new=filters["only_new"],
+        search=filters["search"],
+        found_after=filters["found_after"],
+        confirmed_us_only=filters["confirmed_us_only"],
         sort_by=sort_by,
         offset=offset,
         limit=limit + 1,
@@ -159,6 +179,7 @@ def export_jobs(repository: JobRepository, query: dict[str, str | None]) -> dict
         min_score=int(min_score) if min_score else None,
         eligible_only=(query.get("eligible_only", "false").lower() != "false"),
         only_new=(query.get("only_new", "false").lower() == "true"),
+        **_search_filters(query),
         sort_by=sort_by,
         limit=_bounded_limit(query.get("limit"), default=MAX_EXPORT_LIMIT, maximum=MAX_EXPORT_LIMIT),
     )
@@ -246,25 +267,54 @@ def update_job(repository: JobRepository, job_id: str, payload: dict[str, Any]) 
     return record.to_item()
 
 
+def _duplicate_key(job: Any) -> tuple[str, str, str]:
+    return tuple(normalize_whitespace(value).casefold() for value in (job.company, job.title, job.location_text))
+
+
 def get_digest(repository: JobRepository, query: dict[str, str | None]) -> dict[str, Any]:
-    limit = min(int(query.get("limit") or "20"), 50)
+    limit = _bounded_limit(query.get("limit"), default=20, maximum=50)
+    hours = _bounded_limit(query.get("hours"), default=24, maximum=168)
+    max_per_company = _bounded_limit(query.get("max_per_company"), default=2, maximum=50)
     min_score = int(query.get("min_score") or "40")
+    now = datetime.now(UTC)
+    window_start = now - timedelta(hours=hours)
     candidate_jobs = repository.list_jobs(
         min_score=min_score,
         eligible_only=(query.get("eligible_only", "true").lower() != "false"),
         only_new=(query.get("only_new", "true").lower() != "false"),
-        limit=max(limit * 5, 100),
+        confirmed_us_only=(query.get("confirmed_us_only", "true").lower() != "false"),
+        found_after=window_start.isoformat(),
+        limit=1000,
     )
-    jobs = candidate_jobs[:limit]
+    reviewed = {_duplicate_key(job) for job in repository.list_feedback_jobs(limit=1000)}
+    seen: set[tuple[str, str, str]] = set()
+    company_counts: Counter[str] = Counter()
+    jobs = []
+    for job in candidate_jobs:
+        key = _duplicate_key(job)
+        company_key = normalize_whitespace(job.company).casefold()
+        posted = _sort_timestamp(job.posted_date)
+        # A newly discovered old posting is not a fresh opportunity.
+        if posted and posted < (now - timedelta(days=30)).timestamp():
+            continue
+        if key in seen or key in reviewed or company_counts[company_key] >= max_per_company:
+            continue
+        seen.add(key)
+        company_counts[company_key] += 1
+        jobs.append(job)
+        if len(jobs) >= limit:
+            break
     reason_counts = Counter(reason for job in jobs for reason in job.score_reasons)
-    company_counts = Counter(job.company for job in jobs)
+    companies = Counter(job.company for job in jobs)
     source_counts = Counter(job.source_type for job in jobs)
     return {
-        "generated_at": utc_now_iso(),
+        "generated_at": now.isoformat(),
+        "window_start": window_start.isoformat(),
+        "hours": hours,
         "count": len(jobs),
         "items": [_job_summary(job) for job in jobs],
         "summary": {
-            "top_companies": company_counts.most_common(10),
+            "top_companies": companies.most_common(10),
             "top_sources": source_counts.most_common(10),
             "top_reasons": reason_counts.most_common(10),
         },
@@ -293,6 +343,15 @@ def list_sources(repository: JobRepository, query: dict[str, str | None]) -> dic
 
 def create_source(repository: JobRepository, payload: dict[str, Any]) -> dict[str, Any]:
     source_payload = dict(payload)
+    url = source_payload.pop("url", None)
+    if url:
+        detected = next((source for provider in ATS_DISCOVERY_CONFIG if (source := extract_source_from_url(provider, str(url)))), None)
+        if detected is None or not str(url).startswith("https://"):
+            raise ValueError("Use an HTTPS employer board URL from Ashby, Greenhouse, Lever, SmartRecruiters, or Workable")
+        source_payload = {**detected.to_dict(), **source_payload}
+    source_payload["source_type"] = str(source_payload.get("source_type") or "").strip().lower()
+    if source_payload["source_type"] not in ATS_DISCOVERY_CONFIG:
+        raise ValueError("Unsupported source_type")
     metadata = dict(source_payload.get("metadata") or {})
     priority = source_payload.pop("priority", None)
     seeded = source_payload.pop("seeded", True)

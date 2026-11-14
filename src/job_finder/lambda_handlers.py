@@ -102,7 +102,7 @@ def _response(status_code: int, payload: dict[str, Any]) -> dict[str, Any]:
             "Content-Type": "application/json",
             "Access-Control-Allow-Origin": origin,
             "Access-Control-Allow-Headers": "content-type",
-            "Access-Control-Allow-Methods": "GET,PATCH,OPTIONS",
+            "Access-Control-Allow-Methods": "GET,POST,PATCH,OPTIONS",
         },
         "body": json.dumps(payload, default=_json_default),
     }
@@ -114,7 +114,7 @@ def _raw_response(status_code: int, body: str, *, content_type: str, filename: s
         "Content-Type": content_type,
         "Access-Control-Allow-Origin": origin,
         "Access-Control-Allow-Headers": "content-type",
-        "Access-Control-Allow-Methods": "GET,PATCH,OPTIONS",
+        "Access-Control-Allow-Methods": "GET,POST,PATCH,OPTIONS",
         "Access-Control-Expose-Headers": "content-disposition",
     }
     if filename:

@@ -33,7 +33,10 @@ def build_job_record(
     fallback_url = source.careers_url or f"https://{source.source_type}.local/{source.identifier}/{source_job_id or 'job'}"
     apply_url = canonicalize_url(str(raw_job.get("apply_url") or fallback_url))
     location_text = str(raw_job.get("location_text") or "")
-    remote_type = detect_remote_type(location_text, bool(raw_job.get("remote_hint")))
+    workplace_type = str(raw_job.get("remote_type") or "").lower()
+    remote_type = {"remote": "remote", "hybrid": "hybrid", "onsite": "onsite", "on-site": "onsite"}.get(
+        workplace_type, detect_remote_type(location_text, bool(raw_job.get("remote_hint")))
+    )
     is_remote = remote_type == "remote"
     us_location_confidence = classify_us_location(location_text, remote_type)
     is_us_based = is_us_location(location_text, remote_type)
@@ -212,7 +215,7 @@ def collect_sources(
                 run.jobs_found += len(raw_jobs)
                 built_jobs = [build_job_record(source, raw_job, raw_key, feedback_profile=feedback_profile) for raw_job in raw_jobs]
                 eligible_jobs = sum(1 for job in built_jobs if job.is_eligible)
-                high_score_jobs = sum(1 for job in built_jobs if job.score >= 60)
+                high_score_jobs = sum(1 for job in built_jobs if job.is_eligible and job.score >= 60)
                 total_score = sum(job.score for job in built_jobs)
                 top_score = max((job.score for job in built_jobs), default=0)
                 source_inserted = 0

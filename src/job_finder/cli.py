@@ -70,6 +70,8 @@ def main() -> int:
     digest_parser.add_argument("--jobs", default="data/jobs.json")
     digest_parser.add_argument("--limit", type=int, default=20)
     digest_parser.add_argument("--min-score", type=int, default=40)
+    digest_parser.add_argument("--hours", type=int, default=24, help="Newly found window, up to 168 hours")
+    digest_parser.add_argument("--include-unconfirmed-us", action="store_true")
 
     sources_parser = subparsers.add_parser("sources", help="Inspect local source catalog quality")
     sources_parser.add_argument("--jobs", default="data/jobs.json")
@@ -83,7 +85,19 @@ def main() -> int:
     seed_parser.add_argument("--source-catalog", default=None, help="Optional local source catalog file")
     seed_parser.add_argument("--priority", type=int, default=75, help="Default priority for seeded sources")
 
+    serve_parser = subparsers.add_parser("serve", help="Run the local dashboard and API without AWS")
+    serve_parser.add_argument("--jobs", default="data/jobs.json")
+    serve_parser.add_argument("--runs", default="data/crawl_runs.json")
+    serve_parser.add_argument("--source-catalog", default=None)
+    serve_parser.add_argument("--port", type=int, default=3000)
+    serve_parser.add_argument("--frontend", default=str(Path(__file__).resolve().parents[2] / "frontend"))
+    serve_parser.add_argument("--demo", action="store_true", help="Use disposable illustrative jobs; leave local data untouched")
+
     args = parser.parse_args()
+    if args.command == "serve":
+        from job_finder.server import serve_dashboard
+        serve_dashboard(jobs_path=args.jobs, runs_path=args.runs, sources_path=args.source_catalog, port=args.port, frontend=args.frontend, demo=args.demo)
+        return 0
     if args.command == "collect":
         keywords = json.loads(args.discovery_keywords) if args.discovery_keywords else []
         strategies = json.loads(args.discovery_strategies) if args.discovery_strategies else []
@@ -114,7 +128,7 @@ def main() -> int:
         return 0
     if args.command == "digest":
         repository = LocalJsonRepository(jobs_path=args.jobs)
-        print(json.dumps(get_digest(repository, {"limit": str(args.limit), "min_score": str(args.min_score)}), indent=2))
+        print(json.dumps(get_digest(repository, {"limit": str(args.limit), "min_score": str(args.min_score), "hours": str(args.hours), "confirmed_us_only": str(not args.include_unconfirmed_us).lower()}), indent=2))
         return 0
     if args.command == "sources":
         repository = LocalJsonRepository(jobs_path=args.jobs, sources_path=args.sources_path)

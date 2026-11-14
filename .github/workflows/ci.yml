@@ -28,6 +28,9 @@ jobs:
       - name: Check frontend syntax
         run: node --check frontend/app.js
 
+      - name: Run frontend behavior tests
+        run: node --test tests/frontend.test.cjs
+
       - name: Set up Terraform
         uses: hashicorp/setup-terraform@v3
         with:

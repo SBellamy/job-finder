@@ -13,6 +13,7 @@ def fetch_greenhouse_jobs(source: SourceConfig) -> tuple[dict[str, Any], list[di
     for job in payload.get("jobs", []):
         location = job.get("location") or {}
         metadata = {
+            "provider_updated_at": job.get("updated_at"),
             "department": (job.get("departments") or [{}])[0].get("name") if job.get("departments") else None,
             "office": (job.get("offices") or [{}])[0].get("name") if job.get("offices") else None,
         }
@@ -23,7 +24,7 @@ def fetch_greenhouse_jobs(source: SourceConfig) -> tuple[dict[str, Any], list[di
                 "title": job.get("title") or "",
                 "location_text": location.get("name") if isinstance(location, dict) else str(location),
                 "description_text": job.get("content") or "",
-                "posted_date": job.get("updated_at"),
+                "posted_date": job.get("first_published"),
                 "apply_url": job.get("absolute_url") or "",
                 "remote_hint": "remote" in str(location.get("name", "") if isinstance(location, dict) else location).lower(),
                 "metadata": metadata,

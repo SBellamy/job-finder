@@ -77,6 +77,9 @@ def _job_matches_filters(
     min_score: int | None = None,
     eligible_only: bool = True,
     only_new: bool = False,
+    search: str | None = None,
+    found_after: str | None = None,
+    confirmed_us_only: bool = False,
 ) -> bool:
     if status and record.status != status:
         return False
@@ -90,6 +93,14 @@ def _job_matches_filters(
         return False
     if only_new and not record.is_new:
         return False
+    if confirmed_us_only and record.us_location_confidence != "confirmed":
+        return False
+    if found_after and _sort_timestamp(record.first_seen_at) < _sort_timestamp(found_after):
+        return False
+    if search:
+        haystack = " ".join([record.company, record.title, record.description_text, *record.score_reasons]).casefold()
+        if search.casefold() not in haystack:
+            return False
     return True
 
 
@@ -142,6 +153,9 @@ class JobRepository(ABC):
         min_score: int | None = None,
         eligible_only: bool = True,
         only_new: bool = False,
+        search: str | None = None,
+        found_after: str | None = None,
+        confirmed_us_only: bool = False,
         sort_by: str = "ranked",
         offset: int = 0,
         limit: int = 100,
@@ -285,6 +299,9 @@ class LocalJsonRepository(JobRepository):
         min_score: int | None = None,
         eligible_only: bool = True,
         only_new: bool = False,
+        search: str | None = None,
+        found_after: str | None = None,
+        confirmed_us_only: bool = False,
         sort_by: str = "ranked",
         offset: int = 0,
         limit: int = 100,
@@ -301,6 +318,9 @@ class LocalJsonRepository(JobRepository):
                 min_score=min_score,
                 eligible_only=eligible_only,
                 only_new=only_new,
+                search=search,
+                found_after=found_after,
+                confirmed_us_only=confirmed_us_only,
             )
         ]
         return _sort_jobs(filtered, sort_by=sort_by)[offset : offset + limit]
@@ -392,7 +412,11 @@ class LocalJsonRepository(JobRepository):
             existing.careers_url = source.careers_url or existing.careers_url
             existing.enabled = source.enabled
             existing.last_seen_at = now
-            existing.metadata = {**existing.metadata, **dict(source.metadata)}
+            existing.metadata = {
+                **existing.metadata, **dict(source.metadata),
+                **({"company_size": source.company_size} if source.company_size != "unknown" else {}),
+                **({"company_tags": list(source.company_tags)} if source.company_tags else {}),
+            }
             if existing.status == "dead":
                 existing.status = "candidate"
                 existing.error_count = 0
@@ -575,6 +599,9 @@ class DynamoJobRepository(JobRepository):
         min_score: int | None = None,
         eligible_only: bool = True,
         only_new: bool = False,
+        search: str | None = None,
+        found_after: str | None = None,
+        confirmed_us_only: bool = False,
         sort_by: str = "ranked",
         offset: int = 0,
         limit: int = 100,
@@ -594,6 +621,8 @@ class DynamoJobRepository(JobRepository):
                 "#metadata": "metadata",
             },
         }
+        if search:
+            scan_kwargs["ProjectionExpression"] += ", description_text"
         filter_expression = None
         if status:
             filter_expression = Attr("status").eq(status)
@@ -630,7 +659,7 @@ class DynamoJobRepository(JobRepository):
                     posted_date=item.get("posted_date"),
                     first_seen_at=str(item.get("first_seen_at") or ""),
                     last_seen_at=str(item.get("last_seen_at") or ""),
-                    description_text=str(item.get("description_excerpt") or ""),
+                    description_text=str(item.get("description_text") or item.get("description_excerpt") or ""),
                     score=int(item.get("score") or 0),
                     score_reasons=list(item.get("score_reasons") or []),
                     is_eligible=bool(item.get("is_eligible")),
@@ -650,6 +679,9 @@ class DynamoJobRepository(JobRepository):
                     min_score=min_score,
                     eligible_only=eligible_only,
                     only_new=only_new,
+                    search=search,
+                    found_after=found_after,
+                    confirmed_us_only=confirmed_us_only,
                 ):
                     continue
                 matches.append((_job_sort_key(record, sort_by=sort_by), record.job_id, record))
@@ -663,9 +695,10 @@ class DynamoJobRepository(JobRepository):
         from boto3.dynamodb.conditions import Attr
 
         scan_kwargs: dict[str, Any] = {
-            "ProjectionExpression": "#status, title, company, first_seen_at, last_seen_at",
+            "ProjectionExpression": "#status, title, company, first_seen_at, last_seen_at, #metadata",
             "ExpressionAttributeNames": {
                 "#status": "status",
+                "#metadata": "metadata",
             },
             "FilterExpression": Attr("status").eq("saved") | Attr("status").eq("applied") | Attr("status").eq("dismissed"),
         }
@@ -695,6 +728,7 @@ class DynamoJobRepository(JobRepository):
                         is_remote=False,
                         is_us_based=False,
                         status=str(item.get("status") or "new"),
+                        metadata=dict(item.get("metadata") or {}),
                     )
                 )
             if "LastEvaluatedKey" not in response:
@@ -729,6 +763,9 @@ class DynamoJobRepository(JobRepository):
         min_score: int | None = None,
         eligible_only: bool = True,
         only_new: bool = False,
+        search: str | None = None,
+        found_after: str | None = None,
+        confirmed_us_only: bool = False,
         sort_by: str = "ranked",
         offset: int = 0,
         limit: int = 100,
@@ -740,6 +777,9 @@ class DynamoJobRepository(JobRepository):
             min_score=min_score,
             eligible_only=eligible_only,
             only_new=only_new,
+            search=search,
+            found_after=found_after,
+            confirmed_us_only=confirmed_us_only,
             sort_by=sort_by,
             offset=offset,
             limit=limit,
@@ -837,7 +877,11 @@ class DynamoJobRepository(JobRepository):
             record.careers_url = source.careers_url or record.careers_url
             record.enabled = source.enabled
             record.last_seen_at = now
-            record.metadata = {**record.metadata, **dict(source.metadata)}
+            record.metadata = {
+                **record.metadata, **dict(source.metadata),
+                **({"company_size": source.company_size} if source.company_size != "unknown" else {}),
+                **({"company_tags": list(source.company_tags)} if source.company_tags else {}),
+            }
             if record.status == "dead":
                 record.status = "candidate"
                 record.error_count = 0

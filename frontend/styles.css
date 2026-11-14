@@ -629,3 +629,41 @@ button:disabled {
     justify-content: flex-start;
   }
 }
+
+/* Keep daily review ahead of decorative header space. */
+.hero { grid-template-columns: minmax(0, 1.5fr) minmax(280px, 1fr); }
+.hero-copy { min-height: 0; padding: 28px; }
+h1 { max-width: 18ch; font-size: clamp(2rem, 4vw, 3.4rem); line-height: 1; }
+.lede { margin-top: 16px; line-height: 1.5; }
+.hero-panel { grid-template-columns: repeat(3, 1fr); align-items: center; }
+.stat { min-height: 0; padding: 14px; }
+.toolbar { position: static; grid-template-columns: repeat(4, minmax(0, 1fr)); }
+.insights { grid-template-columns: repeat(2, minmax(0, 1fr)); align-items: start; }
+.insights > :first-child { grid-column: 1 / -1; }
+.shortlist { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px; }
+.shortlist-item { border: 1px solid var(--line); border-radius: 14px; padding: 16px; background: rgba(255,255,255,.55); }
+.shortlist-item a { color: var(--signal); font-weight: 750; line-height: 1.45; }
+.shortlist-item p { margin: 9px 0; line-height: 1.5; font-size: .85rem; }
+.shortlist-item button { padding: 7px 14px; min-height: 36px; }
+.shortlist-window { display: flex; align-items: center; flex-wrap: wrap; gap: 8px; font-size: .9rem; }
+.shortlist-window select, .source-form input { font: inherit; padding: 10px; background: var(--panel-solid); border: 1px solid var(--line-strong); border-radius: 10px; color: var(--ink); }
+.source-form { display: grid; gap: 8px; margin-bottom: 18px; }
+.source-form label { font-size: .9rem; font-weight: 700; }
+.source-form input { min-width: 0; width: 100%; }
+.source-form p { margin: 0; font-size: .85rem; line-height: 1.5; }
+.source-list { max-height: 400px; overflow-y: auto; }
+.cautions { display: flex; flex-wrap: wrap; gap: 6px; }
+.cautions span { padding: 6px 9px; border: 1px solid rgba(154,47,47,.2); color: var(--danger); background: rgba(154,47,47,.06); border-radius: 10px; font-size: .8rem; }
+.cautions[hidden], [hidden] { display: none !important; }
+.demo-banner { padding: 14px 18px; border: 1px solid var(--accent); border-radius: 12px; background: var(--panel-solid); line-height: 1.5; }
+.job-card[data-expanded="true"] .description { white-space: pre-line; }
+@media (max-width: 1060px) {
+  .hero, .insights { grid-template-columns: 1fr; }
+  .toolbar { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+}
+@media (max-width: 680px) {
+  .toolbar, .shortlist { grid-template-columns: 1fr; }
+  .hero-panel { grid-template-columns: repeat(3, minmax(0, 1fr)); padding: 10px; gap: 6px; }
+  .stat { padding: 10px; }
+  .stat .label { font-size: .6rem; letter-spacing: .04em; }
+}

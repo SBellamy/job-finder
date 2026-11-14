@@ -6,7 +6,7 @@ from dataclasses import dataclass, field
 from typing import Iterable
 
 from job_finder.models import JobRecord, SourceConfig
-from job_finder.normalize import normalize_whitespace
+from job_finder.normalize import contains_phrase, normalize_whitespace
 
 
 POSITIVE_KEYWORDS = {
@@ -43,6 +43,9 @@ NEGATIVE_KEYWORDS = {
 
 TITLE_WEIGHTS = {
     "devops": 18,
+    "cloudops": 18,
+    "cloud operations": 16,
+    "cloud engineer": 12,
     "site reliability": 18,
     "sre": 18,
     "platform engineer": 14,
@@ -62,6 +65,9 @@ TITLE_WEIGHTS = {
 }
 
 OFF_TARGET_TITLE_WEIGHTS = {
+    "finance": -45,
+    "accounting": -45,
+    "tax": -45,
     "salesforce": -55,
     "customer success": -50,
     "customer operations": -55,
@@ -249,7 +255,7 @@ class FeedbackProfile:
 def _match_keywords(text: str, weights: dict[str, int]) -> Counter[str]:
     matches: Counter[str] = Counter()
     for keyword in weights:
-        if keyword in text:
+        if contains_phrase(text, keyword):
             matches[keyword] += 1
     return matches
 
@@ -275,6 +281,12 @@ def build_feedback_profile(jobs: Iterable[JobRecord]) -> FeedbackProfile:
         elif job.status in NEGATIVE_FEEDBACK_MULTIPLIERS:
             multiplier = NEGATIVE_FEEDBACK_MULTIPLIERS[job.status]
             dismiss_reason = str(job.metadata.get("dismiss_reason") or "")
+            # Timing, duplicates and location do not imply a dislike of the role.
+            if dismiss_reason in {"already_seen", "low_priority", "not_us"}:
+                continue
+            if dismiss_reason == "weak_company_fit":
+                company_weights[company_key] -= 3
+                continue
             reason_multiplier = DISMISS_REASON_TOKEN_MULTIPLIERS.get(dismiss_reason, 1)
             for token in set(_title_tokens(job.title)):
                 title_token_weights[token] += 6 * multiplier * reason_multiplier
@@ -293,8 +305,10 @@ def _score_title_alignment(title_text: str, positive_keyword_matches: Counter[st
     has_target_title = bool(positive_title_matches)
     positive_keyword_count = sum(positive_keyword_matches.values())
 
-    for keyword, count in positive_title_matches.items():
-        score += TITLE_WEIGHTS[keyword] * count
+    # Nested title synonyms should not multiply the same evidence.
+    if positive_title_matches:
+        keyword = max(positive_title_matches, key=TITLE_WEIGHTS.__getitem__)
+        score += TITLE_WEIGHTS[keyword]
         if keyword in {"site reliability", "sre", "devops"}:
             reasons.append("platform/SRE title")
         else:
@@ -317,7 +331,7 @@ def _score_title_alignment(title_text: str, positive_keyword_matches: Counter[st
 
 
 def _count_keyword_matches(text: str, keywords: set[str]) -> int:
-    return sum(1 for keyword in keywords if keyword in text)
+    return sum(1 for keyword in keywords if contains_phrase(text, keyword))
 
 
 def _score_role_profile(text: str, title_text: str, *, has_target_title: bool) -> tuple[int, list[str]]:
@@ -393,10 +407,12 @@ def score_job(job: JobRecord, source: SourceConfig, feedback_profile: FeedbackPr
     reasons.extend(role_profile_reasons)
 
     negative_matches = _match_keywords(text, NEGATIVE_KEYWORDS)
-    for keyword, count in negative_matches.items():
-        score += NEGATIVE_KEYWORDS[keyword] * count
-    if negative_matches:
+    if len(negative_matches) >= 2:
+        score += sum(NEGATIVE_KEYWORDS[keyword] for keyword in negative_matches)
         reasons.append("Kubernetes-heavy profile")
+    elif negative_matches:
+        score -= 4
+        reasons.append("mentions Kubernetes ecosystem")
 
     if source.company_size in {"small", "mid"}:
         score += 6
@@ -420,9 +436,19 @@ def score_job(job: JobRecord, source: SourceConfig, feedback_profile: FeedbackPr
         score += feedback_adjustment
         reasons.extend(feedback_reasons)
 
+    infrastructure_intent = any(contains_phrase(text, phrase) for phrase in {
+        "cloud infrastructure", "infrastructure as code", "site reliability",
+        "deployment pipelines", "build pipelines", "release pipelines",
+        "production reliability", "developer tooling", "linux systems",
+    })
+    off_target = any(contains_phrase(title_text, phrase) for phrase, weight in OFF_TARGET_TITLE_WEIGHTS.items() if weight <= -30)
+    if off_target or (not has_target_title and not infrastructure_intent):
+        score = min(score, 29)
+        reasons.append("weak DevOps/SRE alignment")
+
     eligible = job.is_remote and job.is_us_based
     unique_reasons: list[str] = []
     for reason in reasons:
         if reason not in unique_reasons:
             unique_reasons.append(reason)
-    return score, unique_reasons[:8], eligible
+    return score, unique_reasons, eligible

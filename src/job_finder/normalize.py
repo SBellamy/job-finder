@@ -89,6 +89,16 @@ NON_US_HINTS = {
     "france",
     "united kingdom",
     "uk",
+    "brazil",
+    "mexico",
+    "poland",
+    "spain",
+    "netherlands",
+    "singapore",
+    "japan",
+    "philippines",
+    "pakistan",
+    "south africa",
 }
 
 GENERIC_REMOTE_HINTS = {
@@ -125,14 +135,19 @@ def canonicalize_url(url: str) -> str:
     )
 
 
+def contains_phrase(text: str, phrase: str) -> bool:
+    """Match complete words, including phrases containing punctuation like CI/CD."""
+    return re.search(r"(?<!\w)" + re.escape(phrase) + r"(?!\w)", text, re.IGNORECASE) is not None
+
+
 def detect_remote_type(location_text: str, remote_hint: bool = False) -> str:
     lowered = normalize_whitespace(location_text).lower()
-    if remote_hint or "remote" in lowered:
-        if "hybrid" in lowered:
-            return "hybrid"
-        return "remote"
-    if "hybrid" in lowered:
+    if contains_phrase(lowered, "hybrid"):
         return "hybrid"
+    if re.search(r"\b(no remote|not remote|non[- ]?remote|remote (?:work )?(?:is )?not (?:available|allowed|supported)|on[- ]site only)\b", lowered):
+        return "onsite"
+    if remote_hint or any(contains_phrase(lowered, hint) for hint in GENERIC_REMOTE_HINTS):
+        return "remote"
     return "onsite"
 
 
@@ -140,12 +155,15 @@ def classify_us_location(location_text: str, remote_type: str) -> str:
     lowered = normalize_whitespace(location_text).lower()
     if not lowered:
         return "assumed" if remote_type == "remote" else "unknown"
-    if any(hint in lowered for hint in NON_US_HINTS):
+    if re.search(r"\b(?:not (?:available |open )?(?:in |to )?|outside (?:of )?|excluding |except )(?:the )?(?:us|usa|united states)\b", lowered):
         return "non_us"
-    if any(hint in lowered for hint in US_LOCATION_HINTS):
+    # Explicit US availability takes precedence for multi-country postings.
+    if any(contains_phrase(lowered, hint) for hint in US_LOCATION_HINTS):
         return "confirmed"
-    if any(state in lowered for state in US_STATE_HINTS):
+    if any(contains_phrase(lowered, state) for state in US_STATE_HINTS):
         return "confirmed"
+    if any(contains_phrase(lowered, hint) for hint in NON_US_HINTS):
+        return "non_us"
     if remote_type == "remote":
         if lowered in GENERIC_REMOTE_HINTS:
             return "assumed"

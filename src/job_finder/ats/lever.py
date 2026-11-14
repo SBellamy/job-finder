@@ -28,12 +28,13 @@ def fetch_lever_jobs(source: SourceConfig) -> tuple[dict[str, Any], list[dict[st
         metadata = {
             "department": categories.get("team"),
             "commitment": categories.get("commitment"),
+            "salary_range": job.get("salaryRange"),
         }
         normalized_jobs.append(
             {
                 "source_job_id": job.get("id"),
                 "title": job.get("text") or "",
-                "location_text": categories.get("location") or "",
+                "location_text": "; ".join(dict.fromkeys([str(value) for value in [categories.get("location"), *(categories.get("allLocations") or []), job.get("country")] if value])),
                 "description_text": " ".join(
                     part
                     for part in [
@@ -45,7 +46,8 @@ def fetch_lever_jobs(source: SourceConfig) -> tuple[dict[str, Any], list[dict[st
                 ),
                 "posted_date": job.get("createdAt"),
                 "apply_url": job.get("hostedUrl") or job.get("applyUrl") or "",
-                "remote_hint": categories.get("workplaceType") == "remote" or "remote" in str(categories.get("location", "")).lower(),
+                "remote_type": job.get("workplaceType"),
+                "remote_hint": job.get("workplaceType", categories.get("workplaceType")) == "remote" or "remote" in str(categories.get("location", "")).lower(),
                 "metadata": metadata,
             }
         )

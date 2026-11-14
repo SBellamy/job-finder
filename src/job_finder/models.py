@@ -174,7 +174,11 @@ class SourceCatalogRecord:
             status=status,
             first_seen_at=timestamp,
             last_seen_at=timestamp,
-            metadata=dict(source.metadata),
+            metadata={
+                **dict(source.metadata),
+                **({"company_size": source.company_size} if source.company_size != "unknown" else {}),
+                **({"company_tags": list(source.company_tags)} if source.company_tags else {}),
+            },
         )
 
     def to_source_config(self) -> SourceConfig:
@@ -182,6 +186,8 @@ class SourceCatalogRecord:
             company=self.company,
             source_type=self.source_type,
             identifier=self.identifier,
+            company_size=str(self.metadata.get("company_size") or "unknown"),
+            company_tags=list(self.metadata.get("company_tags") or []),
             careers_url=self.careers_url,
             enabled=self.enabled,
             metadata=dict(self.metadata),
