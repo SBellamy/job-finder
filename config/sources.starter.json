@@ -1,0 +1,92 @@
+[
+  {
+    "company": "Loop",
+    "source_type": "lever",
+    "identifier": "loopreturns",
+    "company_size": "unknown",
+    "company_tags": [],
+    "careers_url": "https://jobs.lever.co/loopreturns",
+    "enabled": true,
+    "metadata": {
+      "verified_at": "2026-11-14",
+      "priority": 75,
+      "seeded": true,
+      "status": "manual"
+    }
+  },
+  {
+    "company": "Blooming Health",
+    "source_type": "ashby",
+    "identifier": "blooming-health",
+    "company_size": "unknown",
+    "company_tags": [],
+    "careers_url": "https://jobs.ashbyhq.com/blooming-health",
+    "enabled": true,
+    "metadata": {
+      "verified_at": "2026-11-14",
+      "priority": 75,
+      "seeded": true,
+      "status": "manual"
+    }
+  },
+  {
+    "company": "onX",
+    "source_type": "greenhouse",
+    "identifier": "onxmaps",
+    "company_size": "unknown",
+    "company_tags": [],
+    "careers_url": "https://job-boards.greenhouse.io/onxmaps",
+    "enabled": true,
+    "metadata": {
+      "verified_at": "2026-11-14",
+      "priority": 75,
+      "seeded": true,
+      "status": "manual"
+    }
+  },
+  {
+    "company": "Grafana Labs",
+    "source_type": "greenhouse",
+    "identifier": "grafanalabs",
+    "company_size": "unknown",
+    "company_tags": [],
+    "careers_url": "https://job-boards.greenhouse.io/grafanalabs",
+    "enabled": true,
+    "metadata": {
+      "verified_at": "2026-11-14",
+      "priority": 75,
+      "seeded": true,
+      "status": "manual"
+    }
+  },
+  {
+    "company": "Tailscale",
+    "source_type": "greenhouse",
+    "identifier": "tailscale",
+    "company_size": "unknown",
+    "company_tags": [],
+    "careers_url": "https://job-boards.greenhouse.io/tailscale",
+    "enabled": true,
+    "metadata": {
+      "verified_at": "2026-11-14",
+      "priority": 75,
+      "seeded": true,
+      "status": "manual"
+    }
+  },
+  {
+    "company": "incident.io",
+    "source_type": "ashby",
+    "identifier": "incident",
+    "company_size": "unknown",
+    "company_tags": [],
+    "careers_url": "https://jobs.ashbyhq.com/incident",
+    "enabled": true,
+    "metadata": {
+      "verified_at": "2026-11-14",
+      "priority": 75,
+      "seeded": true,
+      "status": "manual"
+    }
+  }
+]

@@ -10,6 +10,13 @@ def utc_now_iso() -> str:
     return datetime.now(UTC).replace(microsecond=0).isoformat()
 
 
+def text_excerpt(value: str, *, length: int = 360) -> str:
+    normalized = " ".join((value or "").split())
+    if len(normalized) <= length:
+        return normalized
+    return f"{normalized[: length - 3]}..."
+
+
 def stable_job_id(source_type: str, source_job_id: str | None, canonical_url: str) -> str:
     base = "::".join(
         [
@@ -79,7 +86,7 @@ class DiscoverySettings:
     source_error_threshold: int = 2
     max_low_value_rechecks_per_run: int = 3
     low_value_retry_hours: int = 48
-    source_types: list[str] = field(default_factory=lambda: ["ashby", "greenhouse", "lever", "workable"])
+    source_types: list[str] = field(default_factory=lambda: ["ashby", "greenhouse", "lever", "smartrecruiters", "workable"])
 
     @classmethod
     def from_dict(cls, data: dict[str, Any]) -> "DiscoverySettings":
@@ -94,7 +101,7 @@ class DiscoverySettings:
             source_error_threshold=max(1, int(data.get("source_error_threshold", 2))),
             max_low_value_rechecks_per_run=max(0, int(data.get("max_low_value_rechecks_per_run", 3))),
             low_value_retry_hours=max(1, int(data.get("low_value_retry_hours", 48))),
-            source_types=[str(item).strip().lower() for item in data.get("source_types", ["ashby", "greenhouse", "lever", "workable"])],
+            source_types=[str(item).strip().lower() for item in data.get("source_types", ["ashby", "greenhouse", "lever", "smartrecruiters", "workable"])],
         )
 
     def to_dict(self) -> dict[str, Any]:
@@ -113,9 +120,19 @@ class CrawlRunRecord:
     jobs_updated: int = 0
     errors_count: int = 0
     errors: list[str] = field(default_factory=list)
+    run_status: str = "completed"
 
     def to_item(self) -> dict[str, Any]:
         return asdict(self)
+
+    @classmethod
+    def from_item(cls, item: dict[str, Any]) -> "CrawlRunRecord":
+        payload = dict(item)
+        for key in ("pages_checked", "jobs_found", "jobs_inserted", "jobs_updated", "errors_count"):
+            payload[key] = int(payload.get(key, 0) or 0)
+        payload["errors"] = list(payload.get("errors") or [])
+        payload["run_status"] = str(payload.get("run_status") or "completed")
+        return cls(**payload)
 
 
 @dataclass(slots=True)
@@ -157,7 +174,11 @@ class SourceCatalogRecord:
             status=status,
             first_seen_at=timestamp,
             last_seen_at=timestamp,
-            metadata=dict(source.metadata),
+            metadata={
+                **dict(source.metadata),
+                **({"company_size": source.company_size} if source.company_size != "unknown" else {}),
+                **({"company_tags": list(source.company_tags)} if source.company_tags else {}),
+            },
         )
 
     def to_source_config(self) -> SourceConfig:
@@ -165,6 +186,8 @@ class SourceCatalogRecord:
             company=self.company,
             source_type=self.source_type,
             identifier=self.identifier,
+            company_size=str(self.metadata.get("company_size") or "unknown"),
+            company_tags=list(self.metadata.get("company_tags") or []),
             careers_url=self.careers_url,
             enabled=self.enabled,
             metadata=dict(self.metadata),
@@ -213,10 +236,12 @@ class JobRecord:
     def to_item(self) -> dict[str, Any]:
         item = asdict(self)
         item["is_new"] = self.is_new
+        item["description_excerpt"] = text_excerpt(self.description_text)
         return item
 
     @classmethod
     def from_item(cls, item: dict[str, Any]) -> "JobRecord":
         payload = dict(item)
         payload.pop("is_new", None)
+        payload.pop("description_excerpt", None)
         return cls(**payload)

@@ -16,19 +16,24 @@ locals {
     SOURCES_TABLE_NAME      = aws_dynamodb_table.sources.name
     RAW_PAYLOAD_BUCKET_NAME = aws_s3_bucket.raw_payloads.id
     ALLOWED_ORIGIN          = var.allowed_origin
+    PROJECT_NAME            = var.project_name
+    ENVIRONMENT             = var.environment
   }
   dashboard_assets = {
     "index.html" = {
-      path         = "${path.module}/../../frontend/index.html"
-      content_type = "text/html; charset=utf-8"
+      path          = "${path.module}/../../frontend/index.html"
+      content_type  = "text/html; charset=utf-8"
+      cache_control = "no-cache, no-store, must-revalidate"
     }
     "styles.css" = {
-      path         = "${path.module}/../../frontend/styles.css"
-      content_type = "text/css; charset=utf-8"
+      path          = "${path.module}/../../frontend/styles.css"
+      content_type  = "text/css; charset=utf-8"
+      cache_control = "no-cache, no-store, must-revalidate"
     }
     "app.js" = {
-      path         = "${path.module}/../../frontend/app.js"
-      content_type = "application/javascript; charset=utf-8"
+      path          = "${path.module}/../../frontend/app.js"
+      content_type  = "application/javascript; charset=utf-8"
+      cache_control = "no-cache, no-store, must-revalidate"
     }
   }
   schedule_map = {
@@ -40,6 +45,7 @@ locals {
 data "archive_file" "lambda" {
   type        = "zip"
   source_dir  = "${path.module}/../../src"
+  excludes    = ["**/__pycache__/**", "**/*.pyc"]
   output_path = "${path.module}/build/job_finder_lambda.zip"
 }
 
@@ -218,6 +224,18 @@ resource "aws_iam_role_policy" "lambda" {
           "logs:PutLogEvents",
         ]
         Resource = "*"
+      },
+      {
+        Effect = "Allow"
+        Action = [
+          "cloudwatch:PutMetricData",
+        ]
+        Resource = "*"
+        Condition = {
+          StringEquals = {
+            "cloudwatch:namespace" = "JobFinder"
+          }
+        }
       }
     ]
   })
@@ -235,6 +253,48 @@ resource "aws_cloudwatch_log_group" "api" {
   tags              = local.common_tags
 }
 
+resource "aws_cloudwatch_metric_alarm" "collector_freshness" {
+  alarm_name          = "${local.name_prefix}-collector-freshness"
+  alarm_description   = "No completed collector crawl has emitted in the last 24 hours."
+  namespace           = "JobFinder"
+  metric_name         = "CompletedCrawls"
+  comparison_operator = "LessThanThreshold"
+  threshold           = 1
+  evaluation_periods  = 1
+  datapoints_to_alarm = 1
+  period              = 86400
+  statistic           = "Sum"
+  treat_missing_data  = "breaching"
+
+  dimensions = {
+    Project     = var.project_name
+    Environment = var.environment
+  }
+
+  tags = local.common_tags
+}
+
+resource "aws_cloudwatch_metric_alarm" "collector_errors" {
+  alarm_name          = "${local.name_prefix}-collector-errors"
+  alarm_description   = "Collector emitted one or more crawl errors during the latest 24-hour window."
+  namespace           = "JobFinder"
+  metric_name         = "CrawlErrors"
+  comparison_operator = "GreaterThanOrEqualToThreshold"
+  threshold           = 1
+  evaluation_periods  = 1
+  datapoints_to_alarm = 1
+  period              = 86400
+  statistic           = "Sum"
+  treat_missing_data  = "notBreaching"
+
+  dimensions = {
+    Project     = var.project_name
+    Environment = var.environment
+  }
+
+  tags = local.common_tags
+}
+
 resource "aws_lambda_function" "collector" {
   function_name    = "${local.name_prefix}-collector"
   role             = aws_iam_role.lambda.arn
@@ -242,8 +302,8 @@ resource "aws_lambda_function" "collector" {
   handler          = "job_finder.lambda_handlers.collector_handler"
   filename         = data.archive_file.lambda.output_path
   source_code_hash = data.archive_file.lambda.output_base64sha256
-  timeout          = 180
-  memory_size      = 512
+  timeout          = 300
+  memory_size      = 1024
   architectures    = ["arm64"]
 
   environment {
@@ -285,7 +345,7 @@ resource "aws_apigatewayv2_api" "http" {
 
   cors_configuration {
     allow_headers = ["content-type"]
-    allow_methods = ["GET", "PATCH", "OPTIONS"]
+    allow_methods = ["GET", "POST", "PATCH", "OPTIONS"]
     allow_origins = [var.allowed_origin]
   }
 
@@ -306,9 +366,27 @@ resource "aws_apigatewayv2_route" "health" {
   target    = "integrations/${aws_apigatewayv2_integration.api.id}"
 }
 
+resource "aws_apigatewayv2_route" "health_freshness" {
+  api_id    = aws_apigatewayv2_api.http.id
+  route_key = "GET /health/freshness"
+  target    = "integrations/${aws_apigatewayv2_integration.api.id}"
+}
+
 resource "aws_apigatewayv2_route" "jobs" {
   api_id    = aws_apigatewayv2_api.http.id
   route_key = "GET /jobs"
+  target    = "integrations/${aws_apigatewayv2_integration.api.id}"
+}
+
+resource "aws_apigatewayv2_route" "job_detail" {
+  api_id    = aws_apigatewayv2_api.http.id
+  route_key = "GET /jobs/{job_id}"
+  target    = "integrations/${aws_apigatewayv2_integration.api.id}"
+}
+
+resource "aws_apigatewayv2_route" "jobs_export" {
+  api_id    = aws_apigatewayv2_api.http.id
+  route_key = "GET /jobs/export"
   target    = "integrations/${aws_apigatewayv2_integration.api.id}"
 }
 
@@ -321,6 +399,18 @@ resource "aws_apigatewayv2_route" "digest" {
 resource "aws_apigatewayv2_route" "sources" {
   api_id    = aws_apigatewayv2_api.http.id
   route_key = "GET /sources"
+  target    = "integrations/${aws_apigatewayv2_integration.api.id}"
+}
+
+resource "aws_apigatewayv2_route" "sources_create" {
+  api_id    = aws_apigatewayv2_api.http.id
+  route_key = "POST /sources"
+  target    = "integrations/${aws_apigatewayv2_integration.api.id}"
+}
+
+resource "aws_apigatewayv2_route" "source_update" {
+  api_id    = aws_apigatewayv2_api.http.id
+  route_key = "PATCH /sources/{source_id}"
   target    = "integrations/${aws_apigatewayv2_integration.api.id}"
 }
 
@@ -527,16 +617,18 @@ resource "aws_s3_bucket_policy" "dashboard" {
 resource "aws_s3_object" "dashboard_assets" {
   for_each = local.dashboard_assets
 
-  bucket       = aws_s3_bucket.dashboard.id
-  key          = each.key
-  source       = each.value.path
-  content_type = each.value.content_type
-  etag         = filemd5(each.value.path)
+  bucket        = aws_s3_bucket.dashboard.id
+  key           = each.key
+  source        = each.value.path
+  content_type  = each.value.content_type
+  cache_control = each.value.cache_control
+  etag          = filemd5(each.value.path)
 }
 
 resource "aws_s3_object" "dashboard_config" {
-  bucket       = aws_s3_bucket.dashboard.id
-  key          = "config.json"
-  content      = jsonencode({ apiBaseUrl = aws_apigatewayv2_api.http.api_endpoint })
-  content_type = "application/json"
+  bucket        = aws_s3_bucket.dashboard.id
+  key           = "config.json"
+  content       = jsonencode({ apiBaseUrl = aws_apigatewayv2_api.http.api_endpoint })
+  content_type  = "application/json"
+  cache_control = "no-cache, no-store, must-revalidate"
 }
