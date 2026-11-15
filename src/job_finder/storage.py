@@ -695,7 +695,7 @@ class DynamoJobRepository(JobRepository):
         from boto3.dynamodb.conditions import Attr
 
         scan_kwargs: dict[str, Any] = {
-            "ProjectionExpression": "#status, title, company, first_seen_at, last_seen_at, #metadata",
+            "ProjectionExpression": "#status, title, company, location_text, first_seen_at, last_seen_at, #metadata",
             "ExpressionAttributeNames": {
                 "#status": "status",
                 "#metadata": "metadata",
@@ -716,7 +716,7 @@ class DynamoJobRepository(JobRepository):
                         source_name="",
                         company=str(item.get("company") or ""),
                         title=str(item.get("title") or ""),
-                        location_text="",
+                        location_text=str(item.get("location_text") or ""),
                         remote_type="unknown",
                         posted_date=None,
                         first_seen_at=str(item.get("first_seen_at") or ""),
