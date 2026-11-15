@@ -5,6 +5,7 @@ import os
 import sys
 import tempfile
 import unittest
+from decimal import Decimal
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from unittest.mock import patch
@@ -199,6 +200,15 @@ class DynamoAvailabilityTests(unittest.TestCase):
         self.assertEqual(calls,2)
         self.assertEqual(self.repo.get_job(record.job_id).notes,'new private note')
         self.assertEqual(self.repo.get_job(record.job_id).score,150)
+
+    def test_fractional_compensation_survives_job_and_projected_summary_writes(self):
+        record=job(1,metadata={'compensation':{'salary':155000.5,'tiers':[{'minimum':42.75}]}})
+        self.repo.upsert_job(record)
+        stored=self.repo.get_job(record.job_id)
+        self.assertEqual(stored.metadata['compensation']['salary'],Decimal('155000.5'))
+        self.assertEqual(self.repo.list_jobs()[0].metadata['compensation']['tiers'][0]['minimum'],Decimal('42.75'))
+        self.repo.update_job(record.job_id,status='saved',notes='retain compensation')
+        self.assertEqual(self.repo.get_job(record.job_id).metadata['compensation']['salary'],Decimal('155000.5'))
 
     def test_review_retries_when_availability_changes_after_the_read(self):
         record=job(1,last_seen_at=OLD);self.repo.upsert_job(record)
