@@ -73,7 +73,11 @@ flowchart LR
 
 Collection normalizes and scores postings before upserting them. Review state survives later crawls. A persistent board catalog provides coverage when search discovery fails. Collector locking, structured logs, freshness metrics and alarms make failures visible.
 
-See the [documentation index](docs/README.md), including [architecture and tradeoffs](docs/architecture.md) for data flow, operational behavior and limits. The indexed feed is rolled out behind a migration flag; full-description search remains scan-based. The API is a personal deployment without user authentication. See the [read-path rollout](docs/feed-indexes.md) for backfill, verification and remaining limits.
+See the [documentation index](docs/README.md), including [architecture and tradeoffs](docs/architecture.md) for data flow, operational behavior and limits.
+
+The indexed feed is deployed behind a rollback flag; full-description search remains scan-based. The November 15 release reduced the observed median 100-job feed request from 9.90 s to 0.44 s in a three-request comparison; see [performance and migration evidence](docs/performance.md) for measurements and limits.
+
+The API is a personal deployment without user authentication. See the [read-path rollout](docs/feed-indexes.md) for backfill, verification and remaining limits.
 
 ## Deploy and verify
 
