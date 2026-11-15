@@ -23,7 +23,7 @@ Measure the current baseline before setting harder targets. Relevance and covera
 
 ## R0 — November 14 release (completed)
 
-**Status:** released through PRs #1 and #2. The local demo and live workflow were verified; the follow-on read-path work is in progress.
+**Status:** released through PRs #1 and #2. The local demo and live workflow were verified; the indexed read-path follow-up was deployed on November 15; see [measured performance](performance.md).
 
 **Scope:** merge the tested improvements into `main`, deploy the exact revision with Terraform, seed verified employer boards, run a bounded collection, invalidate stale frontend cache, and verify the live workflow.
 
@@ -47,7 +47,7 @@ The November 14, 2026 pre-release probe found `/jobs?limit=3&eligible_only=true`
 
 **Suggested effort:** 1–2 focused weeks. These are the first production-readiness gates.
 
-1. **Indexed default feed.** Implement and backfill a query-oriented read model for ranked/newest/status access. Preserve cursor/filter behavior, compare counts and representative results, and switch reads only after verification. Measure latency and read cost before/after. The default feed must no longer scan the whole table; exports need a bounded or asynchronous path for broad searches.
+1. **Indexed default feed — deployed November 15.** Three compact indexes serve ranked/newest/status views after guarded backfill, coverage and result-parity checks. [Measured latency and read capacity](performance.md) document the release. Remaining: representative p95 measurement and a bounded or asynchronous path for broad full-text searches/exports.
 2. **Authentication and private review state.** Use managed sign-in and API authorization for personal jobs, notes, statuses and source controls. Public demo fixtures use a separate read-only/disposable surface. CORS is not authorization. Add tests for unauthenticated requests, denied cross-user access and log redaction.
 3. **Closed-job reconciliation.** Record a complete successful board snapshot. Mark missing jobs as potentially closed, then confirm through repeat observations or the provider. Never mark jobs closed after a partial/failed fetch. Keep saved/applied records and their history.
 4. **Honest collection health.** Distinguish attempted/completed/successful runs, partial failures, all-source failures and zero-job success. Track last successful fetch per board. An all-failed crawl must not keep the freshness alarm green.
@@ -59,6 +59,7 @@ The November 14, 2026 pre-release probe found `/jobs?limit=3&eligible_only=true`
 
 **Suggested effort:** 1–2 weeks after R1, using daily feedback throughout.
 
+- Refresh stored legacy records with current normalization and scoring while preserving review/application history. Clean escaped HTML, recheck remote/US evidence against title and description restrictions, and compare labeled results before promoting the new scores. Older keyword scores must not dominate the feed merely because they were computed under an earlier profile.
 - Set salary, seniority, state-residency, employment type, on-call/travel and authorization preferences with the owner. Unspecified preferences stay unknown.
 - Build a versioned 50-posting evaluation set: strong fits, near misses, known false positives and location edge cases. Track precision at 10 and false exclusions across ranking changes.
 - Extract structured compensation, workplace restrictions and seniority where the source provides them. Preserve evidence and explicitly show unknowns rather than guessing.
