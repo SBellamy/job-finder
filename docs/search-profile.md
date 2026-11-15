@@ -12,6 +12,8 @@ The default ranking is tuned for one personal search. This is a product brief, n
 - Deprioritize Kubernetes-heavy specialization; an incidental Kubernetes requirement is a small tradeoff, not an exclusion.
 - Prefer direct employer/ATS postings and avoid repeatedly reviewing copies of the same role.
 
+A GTM/business-systems title combined with Salesforce/ERP platform specialization is treated as off-target even when cloud keywords are present. An infrastructure title that merely mentions integrations with those tools retains its normal ranking.
+
 ## Daily workflow
 
 1. Check collection health and a small shortlist of newly found roles.

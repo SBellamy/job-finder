@@ -86,6 +86,16 @@ class RankingTests(unittest.TestCase):
         self.assertIn("Kubernetes-heavy profile", heavy.score_reasons)
         self.assertGreater(incidental.score, heavy.score)
 
+    def test_business_systems_specialization_needs_title_and_platform_evidence(self):
+        description="Own Salesforce SFDX and NetSuite release pipelines. AWS Terraform CI/CD Linux cloud infrastructure."
+        specialist=make_job(title="GTM DevOps Engineer",description_text=description)
+        self.assertLess(specialist.score,30)
+        self.assertIn("business-systems specialization mismatch",specialist.score_reasons)
+        infrastructure=make_job(title="Senior DevOps Engineer",description_text=description)
+        self.assertGreater(infrastructure.score,60)
+        generic_gtm=make_job(title="GTM Platform Engineer",description_text="AWS Terraform Linux cloud infrastructure")
+        self.assertGreater(generic_gtm.score,60)
+
     def test_cautions_survive_long_positive_reason_list(self):
         job = make_job(description_text="AWS Terraform Ansible CI/CD GitLab automation Linux RPM packaging observability. Contract role requiring security clearance and Kubernetes Helm.")
         self.assertIn("contract role", job.score_reasons)
