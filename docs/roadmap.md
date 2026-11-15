@@ -59,6 +59,7 @@ The November 14, 2026 pre-release probe found `/jobs?limit=3&eligible_only=true`
 
 **Suggested effort:** 1–2 weeks after R1, using daily feedback throughout.
 
+- Refresh stored legacy records with current normalization and scoring while preserving review/application history. Clean escaped HTML, recheck remote/US evidence against title and description restrictions, and compare labeled results before promoting the new scores. Older keyword scores must not dominate the feed merely because they were computed under an earlier profile.
 - Set salary, seniority, state-residency, employment type, on-call/travel and authorization preferences with the owner. Unspecified preferences stay unknown.
 - Build a versioned 50-posting evaluation set: strong fits, near misses, known false positives and location edge cases. Track precision at 10 and false exclusions across ranking changes.
 - Extract structured compensation, workplace restrictions and seniority where the source provides them. Preserve evidence and explicitly show unknowns rather than guessing.
