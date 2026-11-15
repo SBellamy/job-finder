@@ -49,7 +49,7 @@ The shortlist uses a bounded first-seen window, country confirmation by default,
 
 - The deployed ranked/newest/status reads use compact global secondary indexes, enabled after a guarded backfill and parity verification on November 15, 2026. See [measured performance](performance.md). Full-description search still scans the base table; deep offset pages replay prior index pages. See [the indexed feed rollout](feed-indexes.md).
 - The shortlist considers at most 1,000 recent candidates and 1,000 reviewed records per request. It is a personal-scale feed.
-- Closed jobs are not reconciled against full successful board snapshots yet. Last-seen warnings help review, but do not prove a posting is open.
+- Missing/closed reconciliation uses validated complete Ashby/Greenhouse snapshots, with repeated checks separated by 12 hours before closure. Other providers rely on last-seen filtering. Review history is retained. See [availability and concurrency rules](availability.md).
 - Search indexing is incomplete. The starter catalog is a small verified starting point, not comprehensive market coverage.
 - The deployed API has no user authentication; CORS is not access control. Authenticated review writes are needed before offering this as a shared service.
 - Terraform manages the resources, but a clean local test run does not establish that the deployed environment has no drift. Check a real plan and perform a deployed smoke test when releasing.

@@ -6,6 +6,7 @@ from urllib.parse import quote
 
 from job_finder.ats.http import fetch_json
 from job_finder.models import SourceConfig
+from job_finder.ats.snapshots import board_jobs
 
 
 def _metadata_int(source: SourceConfig, key: str, default: int) -> int:
@@ -85,10 +86,8 @@ def fetch_smartrecruiters_jobs(source: SourceConfig) -> tuple[dict[str, Any], li
         url = f"https://api.smartrecruiters.com/v1/companies/{quote(source.identifier)}/postings?limit={page_limit}&offset={offset}"
         payload, raw_body = fetch_json(url)
         raw_pages.append(raw_body)
-        if not isinstance(payload, dict):
-            break
-        page_jobs = payload.get("content") or []
-        if not isinstance(page_jobs, list) or not page_jobs:
+        page_jobs = board_jobs(payload, "content")
+        if not page_jobs:
             break
         postings.extend(job for job in page_jobs if isinstance(job, dict))
         if len(page_jobs) < page_limit:

@@ -4,12 +4,13 @@ from typing import Any
 
 from job_finder.ats.http import fetch_json
 from job_finder.models import SourceConfig
+from job_finder.ats.snapshots import board_jobs
 
 
 def fetch_workable_jobs(source: SourceConfig) -> tuple[dict[str, Any], list[dict[str, Any]]]:
     url = f"https://www.workable.com/api/accounts/{source.identifier}?details=true"
     payload, raw_body = fetch_json(url)
-    jobs = payload.get("jobs", [])
+    jobs = board_jobs(payload)
     normalized_jobs: list[dict[str, Any]] = []
     for job in jobs:
         location = job.get("location") or {}
@@ -30,6 +31,7 @@ def fetch_workable_jobs(source: SourceConfig) -> tuple[dict[str, Any], list[dict
                 },
             }
         )
+    payload["_snapshot_complete"] = False
     payload["_raw_body"] = raw_body
     return payload, normalized_jobs
 

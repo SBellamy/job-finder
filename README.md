@@ -43,7 +43,7 @@ Supported ATS providers: Ashby, Greenhouse, Lever, SmartRecruiters and Workable.
 
 - **Shortlist:** newly found, unreviewed matches from the past 24 hours, 3 days or 7 days; at most two per company.
 - **Fit and caveats:** prioritize AWS, Terraform, Ansible, CI/CD, Linux, automation, observability and release engineering. Show contract, Kubernetes-heavy and location uncertainty separately.
-- **Freshness:** distinguish employer publication from discovery. Greenhouse edit timestamps are not presented as publication dates.
+- **Freshness:** default to employer postings seen within seven days, with older saved/applied history retained. Track missing/closed postings using guarded complete-board checks. Distinguish employer publication from discovery. Greenhouse edit timestamps are not presented as publication dates.
 - **Review:** save, dismiss with a reason, mark applied and keep notes. Read full descriptions on demand.
 - **Filters:** search across stored descriptions, ATS source, score, status, confirmed US evidence and jobs found since the previous visit. Filters apply before pagination and to CSV export.
 - **Feedback:** “already seen” does not downrank similar DevOps roles. Company and role-fit feedback are treated separately.
@@ -130,4 +130,4 @@ The [roadmap](docs/roadmap.md) prioritizes access control, availability reconcil
 
 ## Current scope
 
-The dashboard and CLI generate a shortlist; email delivery is not implemented. Non-ATS career pages are not collected. Closed postings are not yet reconciled, and source coverage is incomplete. [The roadmap](docs/roadmap.md) tracks the remaining product work.
+The dashboard and CLI generate a shortlist; email delivery is not implemented. Non-ATS career pages are not collected. Missing/closed reconciliation currently covers complete Ashby and Greenhouse boards; other providers use recency filtering. Source coverage is incomplete. See [availability rules and limits](docs/availability.md). [The roadmap](docs/roadmap.md) tracks the remaining product work.

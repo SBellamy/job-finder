@@ -3,6 +3,7 @@ from __future__ import annotations
 import re
 from hashlib import sha256
 from html import unescape
+from html.parser import HTMLParser
 from urllib.parse import parse_qsl, urlencode, urlparse, urlunparse
 
 
@@ -116,7 +117,40 @@ def normalize_whitespace(value: str | None) -> str:
 
 
 def strip_html(value: str | None) -> str:
-    return normalize_whitespace(unescape(HTML_TAG_RE.sub(" ", value or "")))
+    text = value or ""
+    # Greenhouse can return entity-escaped markup, including older double escapes.
+    for _ in range(3):
+        decoded = unescape(text)
+        if decoded == text:
+            break
+        text = decoded
+    parser = _DescriptionText()
+    parser.feed(text)
+    parser.close()
+    return normalize_whitespace("".join(parser.parts))
+
+
+class _DescriptionText(HTMLParser):
+    def __init__(self) -> None:
+        super().__init__(convert_charrefs=True)
+        self.parts: list[str] = []
+        self.hidden = 0
+
+    def handle_starttag(self, tag: str, attrs: list[tuple[str, str | None]]) -> None:
+        if tag in {"script", "style"}:
+            self.hidden += 1
+        if tag in {"p", "div", "br", "li", "ul", "ol", "h1", "h2", "h3", "section"}:
+            self.parts.append(" ")
+
+    def handle_endtag(self, tag: str) -> None:
+        if tag in {"script", "style"}:
+            self.hidden = max(0, self.hidden - 1)
+        if tag in {"p", "div", "li", "ul", "ol", "h1", "h2", "h3", "section"}:
+            self.parts.append(" ")
+
+    def handle_data(self, data: str) -> None:
+        if not self.hidden:
+            self.parts.append(data)
 
 
 def canonicalize_url(url: str) -> str:
@@ -151,6 +185,26 @@ def detect_remote_type(location_text: str, remote_hint: bool = False) -> str:
     return "onsite"
 
 
+def classify_workplace(title: str, location: str, description: str, *, declared: str = "", remote_hint: bool = False) -> str:
+    """Explicit restrictions win over a provider's broad remote flag."""
+    evidence = normalize_whitespace(f"{title} {location}").lower()
+    # A hybrid-cloud engineering title is a technology, not an office policy.
+    evidence = re.sub(r"\bhybrid[- ](?:cloud|infrastructure|environment)s?\b", "", evidence)
+    if contains_phrase(evidence, "hybrid"):
+        return "hybrid"
+    if re.search(r"\b(?:on[- ]site|in[- ]office|not remote|no remote|non[- ]remote)\b", evidence):
+        return "onsite"
+    # Match role-specific requirements, not generic company/benefit paragraphs.
+    policy = normalize_whitespace(description).lower()
+    if re.search(r"\b(?:this|the) (?:role|position|job) (?:is |will be |requires )?(?:a )?hybrid\b", policy):
+        return "hybrid"
+    if re.search(r"\b(?:this|the) (?:role|position|job) (?:is |will be |requires )?(?:an? )?(?:on[- ]site|in[- ]office)\b", policy):
+        return "onsite"
+    if declared in {"remote", "hybrid", "onsite", "on-site"}:
+        return "onsite" if declared == "on-site" else declared
+    return detect_remote_type(location, remote_hint or contains_phrase(title, "remote"))
+
+
 def classify_us_location(location_text: str, remote_type: str) -> str:
     lowered = normalize_whitespace(location_text).lower()
     if not lowered:
@@ -161,6 +215,11 @@ def classify_us_location(location_text: str, remote_type: str) -> str:
     if any(contains_phrase(lowered, hint) for hint in US_LOCATION_HINTS):
         return "confirmed"
     if any(contains_phrase(lowered, state) for state in US_STATE_HINTS):
+        return "confirmed"
+    # Postal abbreviations need city/state punctuation; bare "CA" can mean Canada.
+    codes = "AL AK AZ AR CA CO CT DE FL GA HI ID IL IN IA KS KY LA ME MD MA MI MN MS MO MT NE NV NH NJ NM NY NC ND OH OK OR PA RI SC SD TN TX UT VT VA WA WV WI WY DC".lower().split()
+    state_match = re.search(r"(?P<city>[a-z][a-z .\'-]+),\s*(?:" + "|".join(codes) + r")\b", lowered)
+    if state_match and state_match.group("city").strip() not in GENERIC_REMOTE_HINTS and not any(contains_phrase(lowered, hint) for hint in NON_US_HINTS):
         return "confirmed"
     if any(contains_phrase(lowered, hint) for hint in NON_US_HINTS):
         return "non_us"

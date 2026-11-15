@@ -230,6 +230,7 @@ class JobRecord:
     hash_fingerprint: str = ""
     raw_payload_s3_key: str | None = None
     metadata: dict[str, Any] = field(default_factory=dict)
+    availability: dict[str, Any] = field(default_factory=dict)
 
     @property
     def is_new(self) -> bool:

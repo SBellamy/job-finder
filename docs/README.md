@@ -6,6 +6,7 @@
 - [Search profile](search-profile.md): what the finder optimizes for and what remains unspecified.
 - [Roadmap](roadmap.md): the single current product and engineering plan.
 - [Operations runbook](runbook.md): release verification, rollback and incidents.
+- [Freshness and availability](availability.md): recent results, missing/closed observations and preservation of review history.
 - [Measured performance](performance.md): observed API latency, read capacity and migration evidence.
 - [Indexed feed rollout](feed-indexes.md): staged deployment, backfill, parity checks and read-path switch.
 

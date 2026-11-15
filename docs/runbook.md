@@ -26,7 +26,7 @@ The current stack does not use Lambda aliases with immutable release artifacts, 
 - Check the latest completed run and each source's last successful fetch. A recent attempted run can still have failed every source.
 - Compare scheduler activity with the collector log group, error metrics and source catalog. Confirm the scheduler points to the intended function.
 - Run a bounded explicit-source collection to distinguish discovery failures from ATS/provider failures.
-- Inspect country-confirmation, minimum score, review status and time-window filters before interpreting an empty shortlist as missing data.
+- Inspect country-confirmation, minimum score, review status and time-window filters before interpreting an empty shortlist as missing data. The default availability view requires an employer observation within seven days and excludes missing/closed postings. Saved/applied history bypasses that selection. See [availability rules](availability.md).
 - Check pagination/export/API latency and Lambda logs for timeouts. The default feed uses compact indexes; full-description search still scans. Inspect `jobs_index_read` query-page/read-capacity logs and check the deployed read flag. See [performance evidence](performance.md).
 
 ## Privacy and access

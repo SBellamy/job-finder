@@ -71,6 +71,19 @@ resource "aws_dynamodb_table" "jobs" {
     type = "S"
   }
 
+  attribute {
+    name = "source_name"
+    type = "S"
+  }
+
+  global_secondary_index {
+    name               = "jobs-source-v1"
+    hash_key           = "source_name"
+    range_key          = "job_id"
+    projection_type    = "INCLUDE"
+    non_key_attributes = ["source_type", "last_seen_at", "availability"]
+  }
+
   dynamic "attribute" {
     for_each = toset(["feed_ranked", "feed_newest", "feed_posted"])
     content {
@@ -649,6 +662,8 @@ resource "aws_s3_bucket_policy" "dashboard" {
 
 resource "aws_s3_object" "dashboard_assets" {
   for_each = local.dashboard_assets
+
+  depends_on = [aws_lambda_function.api]
 
   bucket        = aws_s3_bucket.dashboard.id
   key           = each.key

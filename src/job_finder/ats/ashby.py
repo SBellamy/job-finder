@@ -4,6 +4,7 @@ from typing import Any
 
 from job_finder.ats.http import fetch_json
 from job_finder.models import SourceConfig
+from job_finder.ats.snapshots import board_jobs, complete_membership
 
 
 def _location_text(job: dict[str, Any]) -> str:
@@ -20,7 +21,7 @@ def _location_text(job: dict[str, Any]) -> str:
 def fetch_ashby_jobs(source: SourceConfig) -> tuple[dict[str, Any], list[dict[str, Any]]]:
     url = f"https://api.ashbyhq.com/posting-api/job-board/{source.identifier}?includeCompensation=true"
     payload, raw_body = fetch_json(url)
-    jobs = payload.get("jobs", [])
+    jobs = board_jobs(payload)
     normalized_jobs: list[dict[str, Any]] = []
     for job in jobs:
         if job.get("isListed") is False:
@@ -42,6 +43,7 @@ def fetch_ashby_jobs(source: SourceConfig) -> tuple[dict[str, Any], list[dict[st
                 },
             }
         )
+    payload["_snapshot_complete"] = complete_membership(jobs, "id", "jobPostingId")
     payload["_raw_body"] = raw_body
     return payload, normalized_jobs
 

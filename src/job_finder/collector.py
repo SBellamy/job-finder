@@ -10,7 +10,7 @@ from uuid import uuid4
 from job_finder.ats import fetch_jobs
 from job_finder.discovery import discover_sources
 from job_finder.models import CrawlRunRecord, DiscoverySettings, JobRecord, SourceConfig, stable_job_id, utc_now_iso
-from job_finder.normalize import canonicalize_url, classify_us_location, description_fingerprint, detect_remote_type, is_us_location, strip_html
+from job_finder.normalize import canonicalize_url, classify_us_location, classify_workplace, description_fingerprint, is_us_location, strip_html
 from job_finder.scoring import FeedbackProfile, build_feedback_profile, score_job
 from job_finder.storage import JobRepository, RawPayloadStore
 
@@ -34,13 +34,12 @@ def build_job_record(
     apply_url = canonicalize_url(str(raw_job.get("apply_url") or fallback_url))
     location_text = str(raw_job.get("location_text") or "")
     workplace_type = str(raw_job.get("remote_type") or "").lower()
-    remote_type = {"remote": "remote", "hybrid": "hybrid", "onsite": "onsite", "on-site": "onsite"}.get(
-        workplace_type, detect_remote_type(location_text, bool(raw_job.get("remote_hint")))
-    )
+    description_text = strip_html(str(raw_job.get("description_text") or ""))
+    remote_type = classify_workplace(str(raw_job.get("title") or ""), location_text, description_text,
+                                     declared=workplace_type, remote_hint=bool(raw_job.get("remote_hint")))
     is_remote = remote_type == "remote"
     us_location_confidence = classify_us_location(location_text, remote_type)
     is_us_based = is_us_location(location_text, remote_type)
-    description_text = strip_html(str(raw_job.get("description_text") or ""))
     now = utc_now_iso()
     job = JobRecord(
         job_id=stable_job_id(source.source_type, source_job_id, apply_url),
@@ -65,7 +64,8 @@ def build_job_record(
         us_location_confidence=us_location_confidence,
         hash_fingerprint=description_fingerprint(str(raw_job.get("title") or ""), str(raw_job.get("company") or source.company), description_text),
         raw_payload_s3_key=raw_payload_key,
-        metadata=dict(raw_job.get("metadata") or {}),
+        metadata={**dict(raw_job.get("metadata") or {}), "quality_version": "2026-11-15"},
+        availability={"state": "open", "checked_at": now},
     )
     job.score, job.score_reasons, job.is_eligible = score_job(job, source, feedback_profile=feedback_profile)
     return job
@@ -202,6 +202,7 @@ def collect_sources(
         if not active_sources:
             run.errors_count += 1
             run.errors.append("No ATS sources available for collection")
+        successful_sources = 0
         for source in active_sources:
             if not source.enabled:
                 continue
@@ -210,6 +211,7 @@ def collect_sources(
             source_id = f"{source.source_type}:{source.identifier}"
             _log_event("collector_source_started", run_id=run.run_id, source_id=source_id, company=source.company)
             try:
+                observed_at = utc_now_iso()
                 payload, raw_jobs = fetch_jobs(source)
                 raw_key = payload_store.store(run.run_id, f"{source.company}-{source.identifier}", payload.get("_raw_body", ""))
                 run.jobs_found += len(raw_jobs)
@@ -220,6 +222,19 @@ def collect_sources(
                 top_score = max((job.score for job in built_jobs), default=0)
                 source_inserted = 0
                 source_updated = 0
+                for job in built_jobs:
+                    result = repository.upsert_job(job)
+                    if result == "inserted":
+                        run.jobs_inserted += 1
+                        source_inserted += 1
+                    else:
+                        run.jobs_updated += 1
+                        source_updated += 1
+                availability_counts = {"missing": 0, "closed": 0, "conflicts": 0}
+                if payload.get("_snapshot_complete") is True:
+                    availability_counts = repository.reconcile_source_jobs(
+                        source, {job.job_id for job in built_jobs}, observed_at=observed_at, check_id=run.run_id,
+                    )
                 repository.record_source_result(
                     source,
                     was_success=True,
@@ -230,14 +245,7 @@ def collect_sources(
                     top_score=top_score,
                     disable_after_errors=settings.source_error_threshold,
                 )
-                for job in built_jobs:
-                    result = repository.upsert_job(job)
-                    if result == "inserted":
-                        run.jobs_inserted += 1
-                        source_inserted += 1
-                    else:
-                        run.jobs_updated += 1
-                        source_updated += 1
+                successful_sources += 1
                 _log_event(
                     "collector_source_completed",
                     run_id=run.run_id,
@@ -249,6 +257,8 @@ def collect_sources(
                     eligible_jobs=eligible_jobs,
                     high_score_jobs=high_score_jobs,
                     top_score=top_score,
+                    snapshot_complete=payload.get("_snapshot_complete") is True,
+                    availability=availability_counts,
                     duration_seconds=round(time.monotonic() - source_started, 3),
                 )
             except Exception as exc:  # pragma: no cover - kept broad to protect scheduled runs
@@ -270,7 +280,7 @@ def collect_sources(
                     duration_seconds=round(time.monotonic() - source_started, 3),
                 )
                 logger.exception("Run %s failed for %s (%s:%s)", run.run_id, source.company, source.source_type, source.identifier)
-        run.run_status = "completed_with_errors" if run.errors_count else "completed"
+        run.run_status = ("failed" if successful_sources == 0 else "completed_with_errors") if run.errors_count else "completed"
     except Exception as exc:  # pragma: no cover - protects scheduled runs before source loop starts
         run.run_status = "failed"
         run.errors_count += 1

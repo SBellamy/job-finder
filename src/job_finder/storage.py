@@ -9,6 +9,7 @@ from pathlib import Path
 from typing import Any
 
 from job_finder.read_model import FEED_INDEXES, REVIEW_STATUSES, index_fields, job_sort_key as _job_sort_key, sort_timestamp as _sort_timestamp, sortable_number
+from job_finder.availability import missing_observation
 from job_finder.models import CrawlRunRecord, JobRecord, SourceCatalogRecord, SourceConfig, stable_source_id, utc_now_iso
 
 
@@ -85,6 +86,8 @@ def _job_matches_filters(
     only_new: bool = False,
     search: str | None = None,
     found_after: str | None = None,
+    seen_after: str | None = None,
+    available_only: bool = False,
     confirmed_us_only: bool = False,
 ) -> bool:
     if status and record.status != status:
@@ -102,6 +105,10 @@ def _job_matches_filters(
     if confirmed_us_only and record.us_location_confidence != "confirmed":
         return False
     if found_after and _sort_timestamp(record.first_seen_at) < _sort_timestamp(found_after):
+        return False
+    if seen_after and _sort_timestamp(record.last_seen_at) < _sort_timestamp(seen_after):
+        return False
+    if available_only and record.availability.get("state") in {"missing", "closed"}:
         return False
     if search:
         haystack = " ".join([record.company, record.title, record.description_text, *record.score_reasons]).casefold()
@@ -141,6 +148,7 @@ def _summary_record(item: dict[str, Any]) -> JobRecord:
         notes=str(item.get("notes") or ""),
         hash_fingerprint=str(item.get("hash_fingerprint") or ""),
         metadata=dict(item.get("metadata") or {}),
+        availability=dict(item.get("availability") or {}),
     )
 
 
@@ -165,12 +173,17 @@ class JobRepository(ABC):
         only_new: bool = False,
         search: str | None = None,
         found_after: str | None = None,
+        seen_after: str | None = None,
+        available_only: bool = False,
         confirmed_us_only: bool = False,
         sort_by: str = "ranked",
         offset: int = 0,
         limit: int = 100,
     ) -> list[JobRecord]:
         raise NotImplementedError
+
+    def reconcile_source_jobs(self, source: SourceConfig, present_ids: set[str], *, observed_at: str, check_id: str) -> dict[str, int]:
+        return {"missing": 0, "closed": 0, "conflicts": 0}
 
     @abstractmethod
     def list_feedback_jobs(self, *, limit: int = 1000) -> list[JobRecord]:
@@ -292,7 +305,10 @@ class LocalJsonRepository(JobRepository):
                 job.first_seen_at = existing.first_seen_at
                 job.status = existing.status
                 job.notes = existing.notes
-                job.metadata = {**job.metadata, **existing.metadata}
+                job.metadata = {**existing.metadata, **job.metadata}
+                for field in ("status_updated_at", "applied_at", "dismiss_reason"):
+                    if field in existing.metadata:
+                        job.metadata[field] = existing.metadata[field]
                 items[index] = job.to_item()
                 self._write_json(self.jobs_path, items)
                 return "updated"
@@ -311,6 +327,8 @@ class LocalJsonRepository(JobRepository):
         only_new: bool = False,
         search: str | None = None,
         found_after: str | None = None,
+        seen_after: str | None = None,
+        available_only: bool = False,
         confirmed_us_only: bool = False,
         sort_by: str = "ranked",
         offset: int = 0,
@@ -330,10 +348,25 @@ class LocalJsonRepository(JobRepository):
                 only_new=only_new,
                 search=search,
                 found_after=found_after,
+                seen_after=seen_after, available_only=available_only,
                 confirmed_us_only=confirmed_us_only,
             )
         ]
         return _sort_jobs(filtered, sort_by=sort_by)[offset : offset + limit]
+
+    def reconcile_source_jobs(self, source: SourceConfig, present_ids: set[str], *, observed_at: str, check_id: str) -> dict[str, int]:
+        items = self._read_json(self.jobs_path)
+        counts = {"missing": 0, "closed": 0, "conflicts": 0}
+        for item in items:
+            if item.get("source_name") != f"{source.company}:{source.identifier}" or item.get("source_type") != source.source_type or item["job_id"] in present_ids:
+                continue
+            change = missing_observation(dict(item.get("availability") or {}), last_seen_at=item.get("last_seen_at", ""), observed_at=observed_at, check_id=check_id)
+            if change:
+                item["availability"] = change
+                counts[change["state"]] += 1
+        if counts["missing"] or counts["closed"]:
+            self._write_json(self.jobs_path, items)
+        return counts
 
     def list_feedback_jobs(self, *, limit: int = 1000) -> list[JobRecord]:
         feedback_statuses = {"saved", "applied", "dismissed"}
@@ -604,7 +637,7 @@ class DynamoJobRepository(JobRepository):
     def _list_jobs_indexed(
         self, *, status: str | None, source_type: str | None, company: str | None,
         min_score: int | None, eligible_only: bool, only_new: bool,
-        found_after: str | None, confirmed_us_only: bool, sort_by: str,
+        found_after: str | None, seen_after: str | None, available_only: bool, confirmed_us_only: bool, sort_by: str,
         offset: int, limit: int,
     ) -> list[JobRecord]:
         from boto3.dynamodb.conditions import Attr, Key
@@ -657,7 +690,7 @@ class DynamoJobRepository(JobRepository):
                     if not _job_matches_filters(
                         record, status=status, source_type=source_type, company=company,
                         min_score=min_score, eligible_only=eligible_only, only_new=only_new,
-                        found_after=found_after, confirmed_us_only=confirmed_us_only,
+                        found_after=found_after, seen_after=seen_after, available_only=available_only, confirmed_us_only=confirmed_us_only,
                     ):
                         continue
                     previous = records.get(record.job_id)
@@ -692,6 +725,8 @@ class DynamoJobRepository(JobRepository):
         only_new: bool = False,
         search: str | None = None,
         found_after: str | None = None,
+        seen_after: str | None = None,
+        available_only: bool = False,
         confirmed_us_only: bool = False,
         sort_by: str = "ranked",
         offset: int = 0,
@@ -704,7 +739,7 @@ class DynamoJobRepository(JobRepository):
                 "#job_id, source_job_id, canonical_url, apply_url, source_type, source_name, "
                 "company, title, location_text, remote_type, posted_date, first_seen_at, "
                 "last_seen_at, score, score_reasons, is_eligible, is_remote, is_us_based, "
-                "us_location_confidence, #status, notes, hash_fingerprint, description_excerpt, #metadata"
+                "us_location_confidence, #status, notes, hash_fingerprint, description_excerpt, #metadata, availability"
             ),
             "ExpressionAttributeNames": {
                 "#job_id": "job_id",
@@ -747,6 +782,7 @@ class DynamoJobRepository(JobRepository):
                     only_new=only_new,
                     search=search,
                     found_after=found_after,
+                    seen_after=seen_after, available_only=available_only,
                     confirmed_us_only=confirmed_us_only,
                 ):
                     continue
@@ -756,6 +792,74 @@ class DynamoJobRepository(JobRepository):
             scan_kwargs["ExclusiveStartKey"] = response["LastEvaluatedKey"]
 
         return [record for _sort_key, _job_id, record in sorted(matches, reverse=True)[offset : offset + limit]]
+
+    def reconcile_source_jobs(self, source: SourceConfig, present_ids: set[str], *, observed_at: str, check_id: str) -> dict[str, int]:
+        import boto3
+        from concurrent.futures import ThreadPoolExecutor
+        from boto3.dynamodb.conditions import Key
+        from boto3.dynamodb.types import TypeSerializer
+        from botocore.config import Config
+        from botocore.exceptions import ClientError
+        counts = {"missing": 0, "closed": 0, "conflicts": 0, "deferred": 0}
+        source_name = f"{source.company}:{source.identifier}"
+        source_id = stable_source_id(source.source_type, source.identifier)
+        catalog = self.sources_table.get_item(Key={"source_id": source_id}, ConsistentRead=True).get("Item") or {}
+        cursor = (catalog.get("metadata") or {}).get("availability_cursor")
+        query = {"IndexName": "jobs-source-v1", "KeyConditionExpression": Key("source_name").eq(source_name), "Limit": 100}
+        if cursor and cursor.get("source_name") == source_name:
+            query["ExclusiveStartKey"] = cursor
+        if not hasattr(self, "_availability_client"):
+            self._availability_client = boto3.client("dynamodb", region_name=self.jobs_table.meta.client.meta.region_name,
+                config=Config(max_pool_connections=16, retries={"mode": "adaptive", "max_attempts": 8}))
+        serialize = TypeSerializer().serialize
+
+        def mark_missing(item: dict[str, Any]) -> str | None:
+            if item["job_id"] in present_ids or item.get("source_type") != source.source_type:
+                return None
+            previous = dict(item.get("availability") or {})
+            change = missing_observation(previous, last_seen_at=item.get("last_seen_at", ""), observed_at=observed_at, check_id=check_id)
+            if change is None:
+                return None
+            condition = "attribute_exists(job_id) AND attribute_exists(feed_summary) AND source_name = :source AND last_seen_at = :seen"
+            values = {":availability": change, ":source": source_name, ":seen": item.get("last_seen_at", "")}
+            if "availability" in item:
+                condition += " AND #availability = :previous"
+                values[":previous"] = previous
+            else:
+                condition += " AND attribute_not_exists(#availability)"
+            try:
+                self._availability_client.update_item(TableName=self.jobs_table.name, Key={"job_id": {"S": item["job_id"]}},
+                    UpdateExpression="SET #availability = :availability, feed_summary.#availability = :availability",
+                    ConditionExpression=condition, ExpressionAttributeNames={"#availability": "availability"},
+                    ExpressionAttributeValues={key: serialize(value) for key, value in values.items()})
+                return change["state"]
+            except ClientError as exc:
+                if exc.response["Error"]["Code"] != "ConditionalCheckFailedException":
+                    raise
+                return "conflicts"
+
+        # Bound each scheduled run. Persist a source cursor instead of repeatedly
+        # processing the first old records on a large board.
+        with ThreadPoolExecutor(max_workers=8) as pool:
+            for _ in range(10):
+                query["Limit"] = max(1, 100 - counts["missing"] - counts["closed"] - counts["conflicts"])
+                response = self.jobs_table.query(**query)
+                for result in pool.map(mark_missing, response.get("Items", [])):
+                    if result:
+                        counts[result] += 1
+                cursor = response.get("LastEvaluatedKey")
+                if not cursor or sum(counts.values()) >= 100:
+                    break
+                query["ExclusiveStartKey"] = cursor
+        counts["deferred"] = int(bool(cursor))
+        if catalog:
+            names = {"#metadata": "metadata", "#cursor": "availability_cursor"}
+            if cursor:
+                self.sources_table.update_item(Key={"source_id": source_id}, UpdateExpression="SET #metadata.#cursor = :cursor",
+                    ExpressionAttributeNames=names, ExpressionAttributeValues={":cursor": cursor})
+            else:
+                self.sources_table.update_item(Key={"source_id": source_id}, UpdateExpression="REMOVE #metadata.#cursor", ExpressionAttributeNames=names)
+        return counts
 
     def list_feedback_jobs(self, *, limit: int = 1000) -> list[JobRecord]:
         if getattr(self, "use_feed_indexes", False):
@@ -808,22 +912,51 @@ class DynamoJobRepository(JobRepository):
         return _sort_jobs(records, sort_by="newest")[:limit]
 
     def get_job(self, job_id: str) -> JobRecord | None:
-        response = self.jobs_table.get_item(Key={"job_id": job_id})
+        response = self.jobs_table.get_item(Key={"job_id": job_id}, ConsistentRead=True)
         item = response.get("Item")
         return JobRecord.from_item(item) if item else None
 
-    def upsert_job(self, job: JobRecord) -> str:
-        existing = self.get_job(job.job_id)
-        if existing:
-            job.first_seen_at = existing.first_seen_at
-            job.status = existing.status
-            job.notes = existing.notes
-            job.metadata = {**job.metadata, **existing.metadata}
-            operation = "updated"
+    def _put_current_job(self, record: JobRecord, expected: dict[str, Any] | None) -> bool:
+        from botocore.exceptions import ClientError
+        kwargs: dict[str, Any] = {"Item": {**record.to_item(), **index_fields(record)}}
+        if expected is None:
+            kwargs["ConditionExpression"] = "attribute_not_exists(job_id)"
         else:
-            operation = "inserted"
-        self.jobs_table.put_item(Item={**job.to_item(), **index_fields(job)})
-        return operation
+            names = {}
+            values = {}
+            conditions = ["attribute_exists(job_id)"]
+            # These guard review writes, fresh collection and availability changes.
+            for number, field in enumerate(("status", "notes", "metadata", "availability", "last_seen_at", "score")):
+                alias, value = f"#g{number}", f":g{number}"
+                names[alias] = field
+                values[value] = expected[field]
+                defaults = {"status": "new", "notes": "", "metadata": {}, "availability": {}, "last_seen_at": "", "score": 0}
+                conditions.append(f"(attribute_not_exists({alias}) OR {alias} = {value})" if expected[field] == defaults[field] else f"{alias} = {value}")
+            kwargs.update(ConditionExpression=" AND ".join(conditions), ExpressionAttributeNames=names, ExpressionAttributeValues=values)
+        try:
+            self.jobs_table.put_item(**kwargs)
+            return True
+        except ClientError as exc:
+            if exc.response["Error"]["Code"] != "ConditionalCheckFailedException":
+                raise
+            return False
+
+    def upsert_job(self, job: JobRecord) -> str:
+        fresh_metadata = dict(job.metadata)
+        for _ in range(5):
+            existing = self.get_job(job.job_id)
+            expected = existing.to_item() if existing else None
+            if existing:
+                job.first_seen_at = existing.first_seen_at
+                job.status = existing.status
+                job.notes = existing.notes
+                job.metadata = {**existing.metadata, **fresh_metadata}
+                for field in ("status_updated_at", "applied_at", "dismiss_reason"):
+                    if field in existing.metadata:
+                        job.metadata[field] = existing.metadata[field]
+            if self._put_current_job(job, expected):
+                return "updated" if existing else "inserted"
+        raise RuntimeError("Job changed repeatedly during collection; retry rather than overwrite review state")
 
     def list_jobs(
         self,
@@ -836,6 +969,8 @@ class DynamoJobRepository(JobRepository):
         only_new: bool = False,
         search: str | None = None,
         found_after: str | None = None,
+        seen_after: str | None = None,
+        available_only: bool = False,
         confirmed_us_only: bool = False,
         sort_by: str = "ranked",
         offset: int = 0,
@@ -845,7 +980,7 @@ class DynamoJobRepository(JobRepository):
             return self._list_jobs_indexed(
                 status=status, source_type=source_type, company=company,
                 min_score=min_score, eligible_only=eligible_only, only_new=only_new,
-                found_after=found_after, confirmed_us_only=confirmed_us_only,
+                found_after=found_after, seen_after=seen_after, available_only=available_only, confirmed_us_only=confirmed_us_only,
                 sort_by=sort_by, offset=offset, limit=limit,
             )
         return self._list_jobs_projected(
@@ -857,6 +992,7 @@ class DynamoJobRepository(JobRepository):
             only_new=only_new,
             search=search,
             found_after=found_after,
+            seen_after=seen_after, available_only=available_only,
             confirmed_us_only=confirmed_us_only,
             sort_by=sort_by,
             offset=offset,
@@ -864,30 +1000,29 @@ class DynamoJobRepository(JobRepository):
         )
 
     def update_job(
-        self,
-        job_id: str,
-        *,
-        status: str | None = None,
-        notes: str | None = None,
+        self, job_id: str, *, status: str | None = None, notes: str | None = None,
         dismiss_reason: str | None = None,
     ) -> JobRecord | None:
-        record = self.get_job(job_id)
-        if record is None:
-            return None
-        if status is not None:
-            record.status = status
-            record.metadata["status_updated_at"] = utc_now_iso()
-            if status == "applied":
-                record.metadata["applied_at"] = record.metadata.get("applied_at") or record.metadata["status_updated_at"]
-        if notes is not None:
-            record.notes = notes
-        if dismiss_reason is not None:
-            if dismiss_reason:
-                record.metadata["dismiss_reason"] = dismiss_reason
-            else:
-                record.metadata.pop("dismiss_reason", None)
-        self.jobs_table.put_item(Item={**record.to_item(), **index_fields(record)})
-        return record
+        for _ in range(5):
+            record = self.get_job(job_id)
+            if record is None:
+                return None
+            expected = record.to_item()
+            if status is not None:
+                record.status = status
+                record.metadata["status_updated_at"] = utc_now_iso()
+                if status == "applied":
+                    record.metadata["applied_at"] = record.metadata.get("applied_at") or record.metadata["status_updated_at"]
+            if notes is not None:
+                record.notes = notes
+            if dismiss_reason is not None:
+                if dismiss_reason:
+                    record.metadata["dismiss_reason"] = dismiss_reason
+                else:
+                    record.metadata.pop("dismiss_reason", None)
+            if self._put_current_job(record, expected):
+                return record
+        raise RuntimeError("Job changed repeatedly during review; retry rather than overwrite a fresher record")
 
     def record_crawl_run(self, run: CrawlRunRecord) -> None:
         self.crawl_runs_table.put_item(Item=run.to_item())

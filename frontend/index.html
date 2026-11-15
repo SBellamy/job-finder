@@ -74,6 +74,14 @@
             <option value="168">Last 7 days</option>
           </select>
         </label>
+        <label>
+          <span>Availability</span>
+          <select id="availabilityFilter" title="Review history includes older and closed postings.">
+            <option value="7" selected>Seen in last 7 days</option>
+            <option value="30">Seen in last 30 days</option>
+            <option value="">All stored postings</option>
+          </select>
+        </label>
         <label class="toggle">
           <input id="confirmedOnlyToggle" type="checkbox" checked />
           <span>US confirmed</span>
@@ -88,7 +96,7 @@
 
       <section class="meta-row" aria-live="polite">
         <p id="statusLine">Loading jobs...</p>
-        <p class="muted">Direct employer roles · Scores measure fit, not hiring odds</p>
+        <p class="muted">Availability uses employer-board checks; review history includes older postings.</p>
       </section>
 
       <section class="insights">
