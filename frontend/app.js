@@ -14,7 +14,7 @@ const state = {
 const JOB_PAGE_SIZE = 100;
 const FILTER_STORAGE_KEY = "job-finder-filters-v1";
 const VISIT_STORAGE_KEY = "job-finder-last-visit";
-const FILTER_IDS = ["statusFilter", "scoreFilter", "sortFilter", "onlyNewToggle", "confirmedOnlyToggle", "foundFilter", "digestWindow"];
+const FILTER_IDS = ["statusFilter", "scoreFilter", "sortFilter", "onlyNewToggle", "confirmedOnlyToggle", "foundFilter", "digestWindow", "availabilityFilter"];
 const CAUTION_RE = /not explicit|not remote|unclear|off-target|generic|weak |heavy|mismatch|contract role|similar to dismissed/i;
 
 const elements = {
@@ -30,6 +30,7 @@ const elements = {
   confirmedOnlyToggle: document.querySelector("#confirmedOnlyToggle"),
   foundFilter: document.querySelector("#foundFilter"),
   digestWindow: document.querySelector("#digestWindow"),
+  availabilityFilter: document.querySelector("#availabilityFilter"),
   sourceForm: document.querySelector("#sourceForm"),
   sourceUrl: document.querySelector("#sourceUrl"),
   sourceMessage: document.querySelector("#sourceMessage"),
@@ -67,17 +68,28 @@ function foundAfter() {
   return selected ? new Date(Date.now() - Number(selected) * 3600000).toISOString() : null;
 }
 
+function reviewHistoryView() {
+  return ["saved", "applied", "dismissed"].includes(elements.statusFilter.value);
+}
+
+function seenAfter() {
+  const days = Number(elements.availabilityFilter.value || "0");
+  return !reviewHistoryView() && days ? new Date(Date.now() - days * 86400000).toISOString() : null;
+}
+
 function buildJobsUrl(cursor = null) {
   const url = new URL("/jobs", state.apiBaseUrl);
   for (const [key, value] of Object.entries({
     status: elements.statusFilter.value,
-    min_score: elements.scoreFilter.value,
+    min_score: reviewHistoryView() ? null : elements.scoreFilter.value,
     sort: elements.sortFilter.value,
     source_type: elements.sourceFilter.value,
     search: elements.searchInput.value.trim(),
     found_after: state.queryFoundAfter,
-    eligible_only: "true",
-    confirmed_us_only: String(elements.confirmedOnlyToggle.checked),
+    seen_after: reviewHistoryView() ? null : state.querySeenAfter,
+    available_only: String(!reviewHistoryView() && Boolean(elements.availabilityFilter.value)),
+    eligible_only: String(!reviewHistoryView()),
+    confirmed_us_only: String(!reviewHistoryView() && elements.confirmedOnlyToggle.checked),
     only_new: String(elements.onlyNewToggle.checked),
     limit: String(JOB_PAGE_SIZE),
     cursor,
@@ -234,7 +246,13 @@ function updateLoadedStatus() {
 
 async function fetchJobs({ append = false } = {}) {
   const request = ++state.jobsRequest;
-  if (!append) state.queryFoundAfter = foundAfter();
+  if (!append) {
+    state.queryFoundAfter = foundAfter();
+    state.querySeenAfter = seenAfter();
+    elements.availabilityFilter.disabled = reviewHistoryView();
+    elements.scoreFilter.disabled = reviewHistoryView();
+    elements.confirmedOnlyToggle.disabled = reviewHistoryView();
+  }
   const url = buildJobsUrl(append ? state.nextCursor : null);
   elements.statusLine.textContent = append ? "Loading more jobs..." : "Loading jobs...";
   if (append) {
@@ -618,6 +636,7 @@ function renderJobs() {
     const cautions = cardFragment.querySelector(".cautions");
     const concerns = (job.score_reasons || []).filter((reason) => CAUTION_RE.test(reason));
     if (job.us_location_confidence !== "confirmed" && !concerns.some((reason) => /US/i.test(reason))) concerns.unshift("US eligibility needs confirmation");
+    if (["missing", "closed"].includes(job.availability?.state)) concerns.unshift(job.availability.state === "closed" ? "No longer listed on repeated employer checks" : "Missing from the latest complete employer check");
     if (job.last_seen_at && Date.now() - parseSortDate(job.last_seen_at) > 7 * 86400000) concerns.unshift("Not seen in a crawl for over 7 days; check availability");
     for (const concern of concerns) cautions.append(makePill(concern));
     cautions.hidden = !concerns.length;

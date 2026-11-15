@@ -21,7 +21,7 @@ SUMMARY_ATTRIBUTES = (
     "company", "title", "location_text", "remote_type", "posted_date",
     "first_seen_at", "last_seen_at", "description_excerpt", "score", "score_reasons",
     "is_eligible", "is_remote", "is_us_based", "us_location_confidence", "notes",
-    "hash_fingerprint", "metadata",
+    "hash_fingerprint", "metadata", "availability",
 )
 
 

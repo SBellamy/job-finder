@@ -76,3 +76,21 @@ test('one failed insight does not erase successful freshness and source results'
   assert.equal(run('state.sources[0].source_id'), 'one');
   assert.equal(run('state.digest'), null);
 });
+
+
+test('availability filters share a stable cutoff across cursor pages and exports', () => {
+  const { run } = dashboard();
+  run(`elements.availabilityFilter.value = '7'; state.querySeenAfter = '2026-11-08T18:00:00Z';`);
+  const first = new URL(run('buildJobsUrl().toString()'));
+  const next = new URL(run("buildJobsUrl('cursor').toString()"));
+  const exported = new URL(run('buildExportUrl().toString()'));
+  assert.equal(first.searchParams.get('available_only'), 'true');
+  for (const url of [next, exported]) assert.equal(url.searchParams.get('seen_after'), first.searchParams.get('seen_after'));
+  run(`elements.statusFilter.value = 'saved';`);
+  assert.equal(run('seenAfter()'), null);
+  assert.equal(new URL(run('buildJobsUrl().toString()')).searchParams.get('available_only'), 'false');
+  assert.equal(new URL(run('buildJobsUrl().toString()')).searchParams.get('seen_after'), null);
+  assert.equal(new URL(run('buildJobsUrl().toString()')).searchParams.get('eligible_only'), 'false');
+  assert.equal(new URL(run('buildJobsUrl().toString()')).searchParams.get('min_score'), null);
+  assert.equal(new URL(run('buildJobsUrl().toString()')).searchParams.get('confirmed_us_only'), 'false');
+});

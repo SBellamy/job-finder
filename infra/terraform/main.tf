@@ -71,6 +71,19 @@ resource "aws_dynamodb_table" "jobs" {
     type = "S"
   }
 
+  attribute {
+    name = "source_name"
+    type = "S"
+  }
+
+  global_secondary_index {
+    name               = "jobs-source-v1"
+    hash_key           = "source_name"
+    range_key          = "job_id"
+    projection_type    = "INCLUDE"
+    non_key_attributes = ["source_type", "last_seen_at", "availability"]
+  }
+
   dynamic "attribute" {
     for_each = toset(["feed_ranked", "feed_newest", "feed_posted"])
     content {

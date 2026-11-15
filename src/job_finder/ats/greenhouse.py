@@ -4,13 +4,17 @@ from typing import Any
 
 from job_finder.ats.http import fetch_json
 from job_finder.models import SourceConfig
+from job_finder.ats.snapshots import board_jobs, complete_membership
 
 
 def fetch_greenhouse_jobs(source: SourceConfig) -> tuple[dict[str, Any], list[dict[str, Any]]]:
     url = f"https://boards-api.greenhouse.io/v1/boards/{source.identifier}/jobs?content=true"
     payload, raw_body = fetch_json(url)
+    jobs = board_jobs(payload)
+    total = (payload.get("meta") or {}).get("total")
+    payload["_snapshot_complete"] = complete_membership(jobs, "id") and (total is None or total == len(jobs))
     normalized_jobs: list[dict[str, Any]] = []
-    for job in payload.get("jobs", []):
+    for job in jobs:
         location = job.get("location") or {}
         metadata = {
             "provider_updated_at": job.get("updated_at"),

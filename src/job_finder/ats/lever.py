@@ -4,6 +4,7 @@ from typing import Any
 
 from job_finder.ats.http import fetch_json
 from job_finder.models import SourceConfig
+from job_finder.ats.snapshots import board_jobs
 
 
 def _textify(value: Any) -> str:
@@ -21,7 +22,7 @@ def _textify(value: Any) -> str:
 def fetch_lever_jobs(source: SourceConfig) -> tuple[dict[str, Any], list[dict[str, Any]]]:
     url = f"https://api.lever.co/v0/postings/{source.identifier}?mode=json"
     payload, raw_body = fetch_json(url)
-    postings = payload if isinstance(payload, list) else payload.get("data", [])
+    postings = board_jobs({"jobs": payload}) if isinstance(payload, list) else board_jobs(payload, "data")
     normalized_jobs: list[dict[str, Any]] = []
     for job in postings:
         categories = job.get("categories") or {}
@@ -51,5 +52,5 @@ def fetch_lever_jobs(source: SourceConfig) -> tuple[dict[str, Any], list[dict[st
                 "metadata": metadata,
             }
         )
-    wrapper = {"jobs": postings, "_raw_body": raw_body}
+    wrapper = {"jobs": postings, "_raw_body": raw_body, "_snapshot_complete": False}
     return wrapper, normalized_jobs

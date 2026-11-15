@@ -83,16 +83,20 @@ def _bounded_limit(value: str | None, *, default: int, maximum: int) -> int:
 
 
 def _search_filters(query: dict[str, str | None]) -> dict[str, Any]:
-    found_after = query.get("found_after") or None
-    if found_after:
-        parsed = _parse_iso_datetime(found_after)
-        if parsed is None or parsed.tzinfo is None:
-            raise ValueError("found_after must be an ISO timestamp with a timezone")
-        found_after = parsed.astimezone(UTC).isoformat()
+    timestamps = {}
+    for key in ("found_after", "seen_after"):
+        value = query.get(key) or None
+        if value:
+            parsed = _parse_iso_datetime(value)
+            if parsed is None or parsed.tzinfo is None:
+                raise ValueError(f"{key} must be an ISO timestamp with a timezone")
+            value = parsed.astimezone(UTC).isoformat()
+        timestamps[key] = value
     return {
+        **timestamps,
         "search": (query.get("search") or "").strip() or None,
-        "found_after": found_after,
         "confirmed_us_only": (query.get("confirmed_us_only") or "false").lower() == "true",
+        "available_only": (query.get("available_only") or "false").lower() == "true",
     }
 
 
@@ -123,6 +127,8 @@ def list_jobs(repository: JobRepository, query: dict[str, str | None]) -> dict[s
         only_new=filters["only_new"],
         search=filters["search"],
         found_after=filters["found_after"],
+        seen_after=filters["seen_after"],
+        available_only=filters["available_only"],
         confirmed_us_only=filters["confirmed_us_only"],
         sort_by=sort_by,
         offset=offset,
@@ -284,6 +290,8 @@ def get_digest(repository: JobRepository, query: dict[str, str | None]) -> dict[
         only_new=(query.get("only_new", "true").lower() != "false"),
         confirmed_us_only=(query.get("confirmed_us_only", "true").lower() != "false"),
         found_after=window_start.isoformat(),
+        seen_after=(now - timedelta(days=7)).isoformat(),
+        available_only=True,
         limit=1000,
     )
     reviewed = {_duplicate_key(job) for job in repository.list_feedback_jobs(limit=1000)}
