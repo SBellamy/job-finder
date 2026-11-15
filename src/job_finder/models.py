@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from job_finder.read_model import FEED_INTERNAL_ATTRIBUTES
+
 from dataclasses import asdict, dataclass, field
 from datetime import UTC, datetime
 from hashlib import sha256
@@ -244,4 +246,6 @@ class JobRecord:
         payload = dict(item)
         payload.pop("is_new", None)
         payload.pop("description_excerpt", None)
+        for attribute in FEED_INTERNAL_ATTRIBUTES:
+            payload.pop(attribute, None)
         return cls(**payload)

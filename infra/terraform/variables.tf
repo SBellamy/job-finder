@@ -110,3 +110,9 @@ variable "tags" {
   type        = map(string)
   default     = {}
 }
+
+variable "jobs_use_feed_indexes" {
+  description = "Enable indexed job/feedback reads only after all feed indexes are active and backfilled."
+  type        = bool
+  default     = false
+}

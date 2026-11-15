@@ -73,7 +73,7 @@ flowchart LR
 
 Collection normalizes and scores postings before upserting them. Review state survives later crawls. A persistent board catalog provides coverage when search discovery fails. Collector locking, structured logs, freshness metrics and alarms make failures visible.
 
-See [architecture and tradeoffs](docs/architecture.md) for data flow, operational behavior and limits. DynamoDB reads remain scan-based and the API is a personal deployment without user authentication; these are explicit limitations, not claims of production scale.
+See the [documentation index](docs/README.md), including [architecture and tradeoffs](docs/architecture.md) for data flow, operational behavior and limits. The indexed feed is rolled out behind a migration flag; full-description search remains scan-based. The API is a personal deployment without user authentication. See the [read-path rollout](docs/feed-indexes.md) for backfill, verification and remaining limits.
 
 ## Deploy and verify
 
@@ -102,6 +102,7 @@ After deployment, run a collection to refresh existing records with the current 
 ## Development
 
 ```bash
+python3 -m pip install -e ".[test]"
 python3 -m unittest discover -s tests -v
 node --check frontend/app.js
 node --test tests/frontend.test.cjs
@@ -121,8 +122,8 @@ docs/              search profile and architecture decisions
 
 ## Roadmap and operations
 
-The [roadmap](ROADMAP.md) prioritizes access control, availability reconciliation, search quality, reproducible releases and measured performance. The [runbook](docs/runbook.md) covers deployment checks, rollback and collection failures.
+The [roadmap](docs/roadmap.md) prioritizes access control, availability reconciliation, search quality, reproducible releases and measured performance. The [runbook](docs/runbook.md) covers deployment checks, rollback and collection failures.
 
 ## Current scope
 
-The dashboard and CLI generate a shortlist; email delivery is not implemented. Non-ATS career pages are not collected. Closed postings are not yet reconciled, and source coverage is incomplete. [The backlog](BACKLOG.md) tracks the remaining product work.
+The dashboard and CLI generate a shortlist; email delivery is not implemented. Non-ATS career pages are not collected. Closed postings are not yet reconciled, and source coverage is incomplete. [The roadmap](docs/roadmap.md) tracks the remaining product work.
