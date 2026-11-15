@@ -47,7 +47,7 @@ The shortlist uses a bounded first-seen window, country confirmation by default,
 
 ## Deliberate limits
 
-- DynamoDB reads still use scans with projection and application-side filtering/sorting. Pagination bounds response size, not DynamoDB read cost. A query-oriented read model is the next scaling step.
+- Ranked/newest/status reads can use compact global secondary indexes after the guarded backfill and flag switch. Full-description search still scans the base table; deep offset pages replay prior index pages. See [the indexed feed rollout](feed-indexes.md).
 - The shortlist considers at most 1,000 recent candidates and 1,000 reviewed records per request. It is a personal-scale feed.
 - Closed jobs are not reconciled against full successful board snapshots yet. Last-seen warnings help review, but do not prove a posting is open.
 - Search indexing is incomplete. The starter catalog is a small verified starting point, not comprehensive market coverage.

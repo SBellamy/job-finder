@@ -21,7 +21,9 @@ These are targets to measure, not claims about the current deployment:
 
 Measure the current baseline before setting harder targets. Relevance and coverage must improve together: an empty perfect-looking feed is not success.
 
-## R0 — release the current working version
+## R0 — November 14 release (completed)
+
+**Status:** released through PRs #1 and #2. The local demo and live workflow were verified; the follow-on read-path work is in progress.
 
 **Scope:** merge the tested improvements into `main`, deploy the exact revision with Terraform, seed verified employer boards, run a bounded collection, invalidate stale frontend cache, and verify the live workflow.
 
@@ -90,6 +92,12 @@ The November 14, 2026 pre-release probe found `/jobs?limit=3&eligible_only=true`
 - Split discovery and collection scheduling. Add bounded work queues and idempotent retries if actual collection volume needs them.
 
 **Acceptance:** default feed routes no longer scan the full jobs table, the latency target is verified on representative data, and a before/after cost/read comparison is documented.
+
+## Additional coverage and portfolio tasks
+
+- Expand beyond the supported ATS providers to direct career pages when the collection and ranking basics are trustworthy.
+- Keep the demo, dashboard screenshot and observed collection/cost evidence current.
+- Keep source health controls and the architecture/runbook aligned with deployed behavior.
 
 ## Work that should stay out of the critical path
 

@@ -8,6 +8,10 @@ version = "0.1.0"
 description = "AWS-first job discovery pipeline for remote US DevOps and platform roles"
 requires-python = ">=3.12"
 
+[project.optional-dependencies]
+aws = ["boto3>=1.35,<2"]
+test = ["moto[dynamodb]>=5,<6"]
+
 [tool.setuptools]
 package-dir = {"" = "src"}
 

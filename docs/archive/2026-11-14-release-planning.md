@@ -1,3 +1,7 @@
+# November 14, 2026 release planning (historical)
+
+This preserves the planning notes for the first overhaul. That release is complete; use [the roadmap](../roadmap.md) for current priorities.
+
 # Implementation status and release plan
 
 ## Current pass
@@ -32,4 +36,4 @@ Implemented:
 - Collection failure is discoverable.
 - Another developer can run the demo and understand why the system was designed this way.
 
-The backlog contains follow-on work. Deployment and measured production behavior must not be inferred from local tests.
+The [roadmap](../roadmap.md) contains follow-on work. Deployment and measured production behavior must not be inferred from local tests.

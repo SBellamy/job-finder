@@ -1,13 +1,19 @@
 from __future__ import annotations
 
 import json
+import logging
 import time
 from abc import ABC, abstractmethod
 from datetime import datetime
 from pathlib import Path
 from typing import Any
 
+from job_finder.read_model import FEED_INDEXES, REVIEW_STATUSES, index_fields, job_sort_key as _job_sort_key, sort_timestamp as _sort_timestamp, sortable_number
 from job_finder.models import CrawlRunRecord, JobRecord, SourceCatalogRecord, SourceConfig, stable_source_id, utc_now_iso
+
+
+logger = logging.getLogger(__name__)
+logger.setLevel(logging.INFO)
 
 
 def source_quality_score(record: SourceCatalogRecord) -> int:
@@ -104,34 +110,38 @@ def _job_matches_filters(
     return True
 
 
-def _sort_timestamp(value: str | None) -> float:
-    if not value:
-        return 0.0
-    text = str(value).strip()
-    if not text:
-        return 0.0
-    if text.isdigit():
-        numeric = float(text)
-        return numeric / 1000 if numeric > 10_000_000_000 else numeric
-    try:
-        return datetime.fromisoformat(text.replace("Z", "+00:00")).timestamp()
-    except ValueError:
-        return 0.0
-
-
-def _job_sort_key(record: JobRecord, *, sort_by: str) -> tuple[Any, ...]:
-    first_seen = _sort_timestamp(record.first_seen_at)
-    last_seen = _sort_timestamp(record.last_seen_at)
-    posted = _sort_timestamp(record.posted_date)
-    if sort_by == "newest":
-        return (first_seen, last_seen, posted, record.score, record.is_eligible)
-    if sort_by == "newest_posted":
-        return (posted or first_seen, first_seen, last_seen, record.score, record.is_eligible)
-    return (record.is_eligible, record.score, first_seen, posted)
-
-
 def _sort_jobs(records: list[JobRecord], *, sort_by: str = "ranked") -> list[JobRecord]:
     return sorted(records, key=lambda item: _job_sort_key(item, sort_by=sort_by), reverse=True)
+
+
+def _summary_record(item: dict[str, Any]) -> JobRecord:
+    item = {**dict(item.get("feed_summary") or {}), **item}
+    return JobRecord(
+        job_id=item["job_id"],
+        source_job_id=item.get("source_job_id"),
+        canonical_url=str(item.get("canonical_url") or ""),
+        apply_url=str(item.get("apply_url") or ""),
+        source_type=str(item.get("source_type") or ""),
+        source_name=str(item.get("source_name") or ""),
+        company=str(item.get("company") or ""),
+        title=str(item.get("title") or ""),
+        location_text=str(item.get("location_text") or ""),
+        remote_type=str(item.get("remote_type") or "unknown"),
+        posted_date=item.get("posted_date"),
+        first_seen_at=str(item.get("first_seen_at") or ""),
+        last_seen_at=str(item.get("last_seen_at") or ""),
+        description_text=str(item.get("description_text") or item.get("description_excerpt") or ""),
+        score=int(item.get("score") or 0),
+        score_reasons=list(item.get("score_reasons") or []),
+        is_eligible=bool(item.get("is_eligible")),
+        is_remote=bool(item.get("is_remote")),
+        is_us_based=bool(item.get("is_us_based")),
+        us_location_confidence=str(item.get("us_location_confidence") or "unknown"),
+        status=str(item.get("status") or "new"),
+        notes=str(item.get("notes") or ""),
+        hash_fingerprint=str(item.get("hash_fingerprint") or ""),
+        metadata=dict(item.get("metadata") or {}),
+    )
 
 
 class JobRepository(ABC):
@@ -571,10 +581,11 @@ class LocalPayloadStore(RawPayloadStore):
 
 
 class DynamoJobRepository(JobRepository):
-    def __init__(self, jobs_table_name: str, crawl_runs_table_name: str, sources_table_name: str) -> None:
+    def __init__(self, jobs_table_name: str, crawl_runs_table_name: str, sources_table_name: str, *, use_feed_indexes: bool = False) -> None:
         import boto3
 
         dynamodb = boto3.resource("dynamodb")
+        self.use_feed_indexes = use_feed_indexes
         self.jobs_table = dynamodb.Table(jobs_table_name)
         self.crawl_runs_table = dynamodb.Table(crawl_runs_table_name)
         self.sources_table = dynamodb.Table(sources_table_name)
@@ -589,6 +600,86 @@ class DynamoJobRepository(JobRepository):
                 break
             scan_kwargs["ExclusiveStartKey"] = response["LastEvaluatedKey"]
         return items
+
+    def _list_jobs_indexed(
+        self, *, status: str | None, source_type: str | None, company: str | None,
+        min_score: int | None, eligible_only: bool, only_new: bool,
+        found_after: str | None, confirmed_us_only: bool, sort_by: str,
+        offset: int, limit: int,
+    ) -> list[JobRecord]:
+        from boto3.dynamodb.conditions import Attr, Key
+
+        if limit <= 0 or (only_new and status and status != "new"):
+            return []
+        partitions = (status,) if status else (("new",) if only_new else REVIEW_STATUSES)
+        query_sort = "newest" if found_after else sort_by
+        index_name, sort_attribute = FEED_INDEXES[query_sort]
+        stream_is_sorted = query_sort == sort_by
+        target = max(0, offset) + limit
+        records: dict[str, JobRecord] = {}
+        pages = 0
+        consumed = 0.0
+        started = time.monotonic()
+        for partition in partitions:
+            condition = Key("status").eq(partition)
+            if query_sort == "ranked" and eligible_only:
+                prefix = sortable_number(1) + "|"
+                lower = prefix + (sortable_number(min_score) if min_score is not None else "")
+                condition &= Key(sort_attribute).between(lower, prefix + "~")
+            elif query_sort == "newest" and found_after:
+                condition &= Key(sort_attribute).gte(sortable_number(_sort_timestamp(found_after)))
+            query: dict[str, Any] = {
+                "IndexName": index_name, "KeyConditionExpression": condition,
+                "ScanIndexForward": False, "Limit": max(50, min(target, 250)),
+                "ReturnConsumedCapacity": "TOTAL",
+            }
+            filters = []
+            if eligible_only:
+                filters.append(Attr("is_eligible").eq(True))
+            if confirmed_us_only:
+                filters.append(Attr("us_location_confidence").eq("confirmed"))
+            if min_score is not None:
+                filters.append(Attr("score").gte(min_score))
+            if source_type:
+                filters.append(Attr("source_type").eq(source_type))
+            if filters:
+                expression = filters[0]
+                for clause in filters[1:]:
+                    expression &= clause
+                query["FilterExpression"] = expression
+            matched = 0
+            while True:
+                response = self.jobs_table.query(**query)
+                pages += 1
+                consumed += float(response.get("ConsumedCapacity", {}).get("CapacityUnits", 0))
+                for item in response.get("Items", []):
+                    record = _summary_record(item)
+                    if not _job_matches_filters(
+                        record, status=status, source_type=source_type, company=company,
+                        min_score=min_score, eligible_only=eligible_only, only_new=only_new,
+                        found_after=found_after, confirmed_us_only=confirmed_us_only,
+                    ):
+                        continue
+                    previous = records.get(record.job_id)
+                    if previous is None or (
+                        _sort_timestamp(record.metadata.get("status_updated_at")), _sort_timestamp(record.last_seen_at)
+                    ) >= (
+                        _sort_timestamp(previous.metadata.get("status_updated_at")), _sort_timestamp(previous.last_seen_at)
+                    ):
+                        records[record.job_id] = record
+                    matched += 1
+                    if stream_is_sorted and matched >= target:
+                        break
+                if (stream_is_sorted and matched >= target) or not response.get("LastEvaluatedKey"):
+                    break
+                query["ExclusiveStartKey"] = response["LastEvaluatedKey"]
+        result = _sort_jobs(list(records.values()), sort_by=sort_by)[offset:offset + limit]
+        logger.info(json.dumps({
+            "event": "jobs_index_read", "sort": sort_by, "index": index_name, "query_pages": pages,
+            "read_capacity_units": consumed, "returned_count": len(result),
+            "duration_ms": round((time.monotonic() - started) * 1000),
+        }))
+        return result
 
     def _list_jobs_projected(
         self,
@@ -645,32 +736,7 @@ class DynamoJobRepository(JobRepository):
         while True:
             response = self.jobs_table.scan(**scan_kwargs)
             for item in response.get("Items", []):
-                record = JobRecord(
-                    job_id=item["job_id"],
-                    source_job_id=item.get("source_job_id"),
-                    canonical_url=str(item.get("canonical_url") or ""),
-                    apply_url=str(item.get("apply_url") or ""),
-                    source_type=str(item.get("source_type") or ""),
-                    source_name=str(item.get("source_name") or ""),
-                    company=str(item.get("company") or ""),
-                    title=str(item.get("title") or ""),
-                    location_text=str(item.get("location_text") or ""),
-                    remote_type=str(item.get("remote_type") or "unknown"),
-                    posted_date=item.get("posted_date"),
-                    first_seen_at=str(item.get("first_seen_at") or ""),
-                    last_seen_at=str(item.get("last_seen_at") or ""),
-                    description_text=str(item.get("description_text") or item.get("description_excerpt") or ""),
-                    score=int(item.get("score") or 0),
-                    score_reasons=list(item.get("score_reasons") or []),
-                    is_eligible=bool(item.get("is_eligible")),
-                    is_remote=bool(item.get("is_remote")),
-                    is_us_based=bool(item.get("is_us_based")),
-                    us_location_confidence=str(item.get("us_location_confidence") or "unknown"),
-                    status=str(item.get("status") or "new"),
-                    notes=str(item.get("notes") or ""),
-                    hash_fingerprint=str(item.get("hash_fingerprint") or ""),
-                    metadata=dict(item.get("metadata") or {}),
-                )
+                record = _summary_record(item)
                 if not _job_matches_filters(
                     record,
                     status=status,
@@ -692,6 +758,11 @@ class DynamoJobRepository(JobRepository):
         return [record for _sort_key, _job_id, record in sorted(matches, reverse=True)[offset : offset + limit]]
 
     def list_feedback_jobs(self, *, limit: int = 1000) -> list[JobRecord]:
+        if getattr(self, "use_feed_indexes", False):
+            records = [job for status in REVIEW_STATUSES if status != "new" for job in self.list_jobs(
+                status=status, eligible_only=False, sort_by="newest", limit=limit,
+            )]
+            return _sort_jobs(records, sort_by="newest")[:limit]
         from boto3.dynamodb.conditions import Attr
 
         scan_kwargs: dict[str, Any] = {
@@ -751,7 +822,7 @@ class DynamoJobRepository(JobRepository):
             operation = "updated"
         else:
             operation = "inserted"
-        self.jobs_table.put_item(Item=job.to_item())
+        self.jobs_table.put_item(Item={**job.to_item(), **index_fields(job)})
         return operation
 
     def list_jobs(
@@ -770,6 +841,13 @@ class DynamoJobRepository(JobRepository):
         offset: int = 0,
         limit: int = 100,
     ) -> list[JobRecord]:
+        if getattr(self, "use_feed_indexes", False) and not search:
+            return self._list_jobs_indexed(
+                status=status, source_type=source_type, company=company,
+                min_score=min_score, eligible_only=eligible_only, only_new=only_new,
+                found_after=found_after, confirmed_us_only=confirmed_us_only,
+                sort_by=sort_by, offset=offset, limit=limit,
+            )
         return self._list_jobs_projected(
             status=status,
             source_type=source_type,
@@ -808,7 +886,7 @@ class DynamoJobRepository(JobRepository):
                 record.metadata["dismiss_reason"] = dismiss_reason
             else:
                 record.metadata.pop("dismiss_reason", None)
-        self.jobs_table.put_item(Item=record.to_item())
+        self.jobs_table.put_item(Item={**record.to_item(), **index_fields(record)})
         return record
 
     def record_crawl_run(self, run: CrawlRunRecord) -> None:

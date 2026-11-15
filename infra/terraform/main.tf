@@ -18,6 +18,7 @@ locals {
     ALLOWED_ORIGIN          = var.allowed_origin
     PROJECT_NAME            = var.project_name
     ENVIRONMENT             = var.environment
+    JOBS_USE_FEED_INDEXES   = tostring(var.jobs_use_feed_indexes)
   }
   dashboard_assets = {
     "index.html" = {
@@ -63,6 +64,36 @@ resource "aws_dynamodb_table" "jobs" {
   attribute {
     name = "job_id"
     type = "S"
+  }
+
+  attribute {
+    name = "status"
+    type = "S"
+  }
+
+  dynamic "attribute" {
+    for_each = toset(["feed_ranked", "feed_newest", "feed_posted"])
+    content {
+      name = attribute.value
+      type = "S"
+    }
+  }
+
+  dynamic "global_secondary_index" {
+    for_each = {
+      "jobs-ranked-v1" = "feed_ranked"
+      "jobs-newest-v1" = "feed_newest"
+      "jobs-posted-v1" = "feed_posted"
+    }
+    content {
+      name            = global_secondary_index.key
+      hash_key        = "status"
+      range_key       = global_secondary_index.value
+      projection_type = "INCLUDE"
+      non_key_attributes = [
+        "feed_summary", "score", "is_eligible", "us_location_confidence", "source_type",
+      ]
+    }
   }
 
   tags = local.common_tags
@@ -201,10 +232,12 @@ resource "aws_iam_role_policy" "lambda" {
           "dynamodb:GetItem",
           "dynamodb:PutItem",
           "dynamodb:Scan",
+          "dynamodb:Query",
           "dynamodb:UpdateItem",
         ]
         Resource = [
           aws_dynamodb_table.jobs.arn,
+          "${aws_dynamodb_table.jobs.arn}/index/*",
           aws_dynamodb_table.crawl_runs.arn,
           aws_dynamodb_table.sources.arn,
         ]

@@ -28,6 +28,7 @@ def _repository() -> DynamoJobRepository:
         jobs_table_name=settings["jobs_table_name"] or "",
         crawl_runs_table_name=settings["crawl_runs_table_name"] or "",
         sources_table_name=settings["sources_table_name"] or "",
+        use_feed_indexes=os.environ.get("JOBS_USE_FEED_INDEXES", "false").lower() == "true",
     )
 
 
