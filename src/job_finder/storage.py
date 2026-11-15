@@ -5,6 +5,7 @@ import logging
 import time
 from abc import ABC, abstractmethod
 from datetime import datetime
+from decimal import Decimal
 from pathlib import Path
 from typing import Any
 
@@ -15,6 +16,17 @@ from job_finder.models import CrawlRunRecord, JobRecord, SourceCatalogRecord, So
 
 logger = logging.getLogger(__name__)
 logger.setLevel(logging.INFO)
+
+
+def _dynamo_value(value: Any) -> Any:
+    """Provider JSON can contain fractional compensation; DynamoDB uses Decimal."""
+    if isinstance(value, float):
+        return Decimal(str(value))
+    if isinstance(value, dict):
+        return {key: _dynamo_value(item) for key, item in value.items()}
+    if isinstance(value, (list, tuple)):
+        return [_dynamo_value(item) for item in value]
+    return value
 
 
 def source_quality_score(record: SourceCatalogRecord) -> int:
@@ -918,7 +930,7 @@ class DynamoJobRepository(JobRepository):
 
     def _put_current_job(self, record: JobRecord, expected: dict[str, Any] | None) -> bool:
         from botocore.exceptions import ClientError
-        kwargs: dict[str, Any] = {"Item": {**record.to_item(), **index_fields(record)}}
+        kwargs: dict[str, Any] = {"Item": _dynamo_value({**record.to_item(), **index_fields(record)})}
         if expected is None:
             kwargs["ConditionExpression"] = "attribute_not_exists(job_id)"
         else:
