@@ -219,7 +219,7 @@ class ProviderTests(unittest.TestCase):
         self.assertTrue(build_job_record(source, jobs[0], None).is_eligible)
         self.assertFalse(build_job_record(source, jobs[1], None).is_eligible)
 
-    def test_aws_feedback_keeps_dismiss_reason(self):
+    def test_aws_feedback_keeps_dismiss_reason_and_duplicate_identity(self):
         class Condition:
             def __init__(self, *args): pass
             def eq(self, *args): return self
@@ -227,14 +227,19 @@ class ProviderTests(unittest.TestCase):
         class Table:
             def scan(self, **kwargs):
                 self.projection = kwargs["ProjectionExpression"]
-                return {"Items": [{"title": "DevOps Engineer", "company": "Acme", "status": "dismissed", "metadata": {"dismiss_reason": "already_seen"}}]}
+                return {"Items": [{"title": "DevOps Engineer", "company": "Acme", "location_text": "Remote, United States", "status": "dismissed", "metadata": {"dismiss_reason": "already_seen"}}]}
         table = Table()
         repository = object.__new__(DynamoJobRepository)
         repository.jobs_table = table
         fake = types.ModuleType("boto3.dynamodb.conditions")
         fake.Attr = Condition
+        repository.list_jobs = lambda **query: [make_job("reposted-copy")]
         with patch.dict(sys.modules, {"boto3.dynamodb.conditions": fake}):
             jobs = repository.list_feedback_jobs()
+            digest = get_digest(repository, {})
+        self.assertEqual(digest["count"], 0)
+        self.assertEqual(jobs[0].location_text, "Remote, United States")
+        self.assertIn("location_text", table.projection)
         self.assertIn("#metadata", table.projection)
         self.assertEqual(jobs[0].metadata["dismiss_reason"], "already_seen")
         self.assertTrue(build_feedback_profile(jobs).is_empty)
