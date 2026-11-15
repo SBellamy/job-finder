@@ -441,7 +441,12 @@ def score_job(job: JobRecord, source: SourceConfig, feedback_profile: FeedbackPr
         "deployment pipelines", "build pipelines", "release pipelines",
         "production reliability", "developer tooling", "linux systems",
     })
-    off_target = any(contains_phrase(title_text, phrase) for phrase, weight in OFF_TARGET_TITLE_WEIGHTS.items() if weight <= -30)
+    business_systems_specialist = bool(re.search(r"\b(?:gtm|go[- ]to[- ]market|business systems)\b", title_text)) and _count_keyword_matches(text, {
+        "salesforce", "netsuite", "mulesoft", "workato", "sfdx", "suitescript", "copado",
+    }) >= 2
+    if business_systems_specialist:
+        reasons.append("business-systems specialization mismatch")
+    off_target = business_systems_specialist or any(contains_phrase(title_text, phrase) for phrase, weight in OFF_TARGET_TITLE_WEIGHTS.items() if weight <= -30)
     if off_target or (not has_target_title and not infrastructure_intent):
         score = min(score, 29)
         reasons.append("weak DevOps/SRE alignment")
