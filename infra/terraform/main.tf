@@ -663,6 +663,8 @@ resource "aws_s3_bucket_policy" "dashboard" {
 resource "aws_s3_object" "dashboard_assets" {
   for_each = local.dashboard_assets
 
+  depends_on = [aws_lambda_function.api]
+
   bucket        = aws_s3_bucket.dashboard.id
   key           = each.key
   source        = each.value.path
